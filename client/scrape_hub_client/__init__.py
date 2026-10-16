@@ -143,10 +143,14 @@ class HubClient(_Auth):
             raise
 
     def _heartbeat_loop(self):
+        beats = 0
         while not self._stop.wait(30):
+            beats += 1
             try:
                 self.flush()
-                self.call("POST", f"/api/v1/runs/{self.run_id}/heartbeat", {})
+                # Re-check our own address every ~5 minutes so the hub notices if it changes mid-run.
+                body = {"egress_ip": self._egress_ip()} if beats % 10 == 0 else {}
+                self.call("POST", f"/api/v1/runs/{self.run_id}/heartbeat", body)
             except Exception as e:
                 print(f"[hub] heartbeat failed: {e}", flush=True)
 

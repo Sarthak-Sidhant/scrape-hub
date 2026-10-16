@@ -124,7 +124,8 @@ def test_overview_throughput_and_ips(client, clean, login):
     assert ov["repos"][0]["repository"] == "Sarthak-Sidhant/results-tenders"
     pt = login.get("/api/throughput?minutes=30").json()["points"][0]
     assert pt["records"] == 1 and abs(pt["t"] - __import__("time").time()) < 120
-    assert login.get("/api/ips").json()["ips"][0]["egress_ip"] == "20.1.2.3"
+    ips = {i["ip"]: i for i in login.get("/api/ips").json()["ips"]}
+    assert "20.1.2.3" in ips and ips["20.1.2.3"]["sources"] == "reported"
 
 
 def test_stalled_run_flagged(client, clean, login):
@@ -230,3 +231,26 @@ def test_projects_listed_in_creation_order(client, clean, login):
     start(client, project="aaa-second", run_id="222")
     names = [p["project"] for p in login.get("/api/overview").json()["projects"]]
     assert names == ["zzz-first", "aaa-second"]
+
+
+def test_ip_change_mid_run_is_recorded(client, clean, login, monkeypatch):
+    from scrape_hub import config
+    monkeypatch.setattr(config, "TRUST_PROXY", True)
+    h = {**hdr(), "x-forwarded-for": "20.0.0.1"}
+    rid = client.post("/api/v1/runs", json={"project": "roaming", "job_index": 0, "total_jobs": 2, "egress_ip": "20.0.0.1"}, headers=h).json()["run_id"]
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": []}, headers=h)
+    # the runner's address changes halfway through
+    h2 = {**hdr(), "x-forwarded-for": "20.0.0.99"}
+    client.post(f"/api/v1/runs/{rid}/heartbeat", json={"egress_ip": "20.0.0.99"}, headers=h2)
+    run = login.get("/api/runs").json()["runs"][0]
+    assert run["runner_ip"] == "20.0.0.99" and run["egress_ip"] == "20.0.0.99"   # current address is the latest
+    assert run["ip_count"] == 2
+    assert {(i["ip"], i["source"]) for i in run["ips"]} == {("20.0.0.1", "api"), ("20.0.0.1", "reported"), ("20.0.0.99", "api"), ("20.0.0.99", "reported")}
+    assert {i["ip"] for i in login.get("/api/ips").json()["ips"]} == {"20.0.0.1", "20.0.0.99"}
+
+
+def test_runs_report_rate_and_sparkline(client, clean, login):
+    rid = start(client, project="sparky")
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [{"record_id": str(i), "data": {}} for i in range(10)]}, headers=hdr())
+    run = login.get("/api/runs").json()["runs"][0]
+    assert len(run["spark"]) == 15 and sum(run["spark"]) == 10 and run["rate_5m"] == 2.0

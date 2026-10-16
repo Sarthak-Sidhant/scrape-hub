@@ -87,3 +87,18 @@ CREATE TABLE IF NOT EXISTS metrics (
     value   DOUBLE PRECISION NOT NULL
 );
 CREATE INDEX IF NOT EXISTS metrics_project_name_at ON metrics (project, name, at);
+
+-- Every IP a run has been seen from. source 'api' = the address the hub saw on a call, 'reported' = the runner's own egress lookup.
+CREATE TABLE IF NOT EXISTS run_ips (
+    run_id     BIGINT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    ip         TEXT NOT NULL,
+    source     TEXT NOT NULL,
+    first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    hits       INT NOT NULL DEFAULT 1,
+    PRIMARY KEY (run_id, ip, source)
+);
+INSERT INTO run_ips (run_id, ip, source, first_seen, last_seen)
+    SELECT id, runner_ip, 'api', started_at, last_seen FROM runs WHERE runner_ip <> '' ON CONFLICT DO NOTHING;
+INSERT INTO run_ips (run_id, ip, source, first_seen, last_seen)
+    SELECT id, egress_ip, 'reported', started_at, last_seen FROM runs WHERE egress_ip <> '' ON CONFLICT DO NOTHING;

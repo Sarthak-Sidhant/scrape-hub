@@ -71,6 +71,7 @@ class BatchIn(BaseModel):
     latency_ms: int = 0
     note: Optional[str] = None
     metrics: dict[str, float] = {}
+    egress_ip: str = ""
 
 
 class Finish(BaseModel):
@@ -152,6 +153,23 @@ def seed_queue(name: str, body: QueueSeed, who: Caller = Depends(caller)):
     return {"added": added, "reset": reset}
 
 
+def touch_ip(c, run_id: int, ip: str, source: str = "api"):
+    """Remember every address a run is seen from; the run's current address is the latest one."""
+    ip = (ip or "").strip()[:64]
+    if not ip:
+        return
+    c.execute(
+        """INSERT INTO run_ips (run_id, ip, source) VALUES (%s,%s,%s)
+           ON CONFLICT (run_id, ip, source) DO UPDATE SET last_seen=now(), hits=run_ips.hits+1""", (run_id, ip, source))
+    c.execute("UPDATE runs SET runner_ip=%s WHERE id=%s" if source == "api" else "UPDATE runs SET egress_ip=%s WHERE id=%s", (ip, run_id))
+
+
+def seen(c, run_id: int, request: Request, egress_ip: str = ""):
+    touch_ip(c, run_id, client_ip(request), "api")
+    if egress_ip:
+        touch_ip(c, run_id, egress_ip, "reported")
+
+
 def own_run(c, run_id: int, who: Caller):
     row = c.execute("SELECT * FROM runs WHERE id=%s", (run_id,)).fetchone()
     if not row or row["repository"] != who.repository:
@@ -174,6 +192,7 @@ def start_run(body: RunStart, request: Request, who: Caller = Depends(caller)):
             (body.project, who.repository, who.workflow, who.gh_run_id, who.run_attempt, body.job_index,
              body.total_jobs, who.ref, who.actor, who.kind, client_ip(request), body.egress_ip[:64], body.note),
         ).fetchone()
+        seen(c, row["id"], request, body.egress_ip)
     return {"run_id": row["id"]}
 
 
@@ -185,9 +204,10 @@ def store_metrics(c, run, metrics):
 
 
 @app.post("/api/v1/runs/{run_id}/batches")
-def post_batch(run_id: int, body: BatchIn, who: Caller = Depends(caller)):
+def post_batch(run_id: int, body: BatchIn, request: Request, who: Caller = Depends(caller)):
     with db.conn() as c:
         run = own_run(c, run_id, who)
+        seen(c, run_id, request, body.egress_ip)
         store_metrics(c, run, body.metrics)
         if body.records:
             with c.cursor() as cur:
@@ -211,9 +231,10 @@ def post_batch(run_id: int, body: BatchIn, who: Caller = Depends(caller)):
 
 
 @app.post("/api/v1/runs/{run_id}/heartbeat")
-def heartbeat(run_id: int, body: BatchIn = BatchIn(), who: Caller = Depends(caller)):
+def heartbeat(run_id: int, request: Request, body: BatchIn = BatchIn(), who: Caller = Depends(caller)):
     with db.conn() as c:
         run = own_run(c, run_id, who)
+        seen(c, run_id, request, body.egress_ip)
         store_metrics(c, run, body.metrics)
         c.execute(
             "UPDATE runs SET last_seen=now(), errors=errors+%s, blocked=blocked+%s, note=COALESCE(%s, note) WHERE id=%s",
@@ -223,20 +244,22 @@ def heartbeat(run_id: int, body: BatchIn = BatchIn(), who: Caller = Depends(call
 
 
 @app.post("/api/v1/runs/{run_id}/finish")
-def finish(run_id: int, body: Finish, who: Caller = Depends(caller)):
+def finish(run_id: int, body: Finish, request: Request, who: Caller = Depends(caller)):
     if body.state not in ("finished", "failed"):
         raise HTTPException(422, "state must be finished or failed")
     with db.conn() as c:
         own_run(c, run_id, who)
+        seen(c, run_id, request)
         c.execute("UPDATE runs SET state=%s, finished_at=now(), last_seen=now(), note=%s WHERE id=%s",
                   (body.state, body.note, run_id))
     return {"ok": True}
 
 
 @app.post("/api/v1/runs/{run_id}/claim")
-def claim(run_id: int, body: Claim, who: Caller = Depends(caller)):
+def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(caller)):
     with db.conn() as c:
         run = own_run(c, run_id, who)
+        seen(c, run_id, request)
         if body.project != run["project"]:
             raise HTTPException(403, "a run can only claim from its own project")
         rows = c.execute(
@@ -255,11 +278,12 @@ def claim(run_id: int, body: Claim, who: Caller = Depends(caller)):
 
 
 @app.post("/api/v1/runs/{run_id}/complete")
-def complete(run_id: int, body: Complete, who: Caller = Depends(caller)):
+def complete(run_id: int, body: Complete, request: Request, who: Caller = Depends(caller)):
     if body.status not in ("done", "failed", "pending"):
         raise HTTPException(422, "status must be done, failed or pending")
     with db.conn() as c:
         run = own_run(c, run_id, who)
+        seen(c, run_id, request)
         c.execute(
             "UPDATE queue SET status=%s, done_at=CASE WHEN %s='done' THEN now() END, claimed_by=NULL, "
             "last_error=%s, fetched=COALESCE(%s, fetched) "
@@ -447,6 +471,24 @@ def runs(state: str = "", limit: int = 100):
                FROM runs WHERE (%s = '' OR state = %s)
                ORDER BY (state='running') DESC, last_seen DESC LIMIT %s""",
             (config.STALL_AFTER_S, state, state, limit)).fetchall()
+        ids = [r["id"] for r in rows]
+        ips, spark = {}, {}
+        if ids:
+            for r in c.execute("SELECT run_id, ip, source, first_seen, last_seen, hits FROM run_ips WHERE run_id = ANY(%s) ORDER BY first_seen", (ids,)).fetchall():
+                ips.setdefault(r["run_id"], []).append({k: r[k] for k in ("ip", "source", "first_seen", "last_seen", "hits")})
+            now_min = int(time.time() // 60) * 60
+            for r in c.execute(
+                    """SELECT run_id, (floor(extract(epoch FROM at) / 60) * 60)::bigint AS t, sum(records)::int AS n
+                       FROM batches WHERE run_id = ANY(%s) AND at > now() - interval '15 minutes' GROUP BY 1, 2""", (ids,)).fetchall():
+                arr = spark.setdefault(r["run_id"], [0] * 15)
+                i = 14 - (now_min - r["t"]) // 60
+                if 0 <= i < 15:
+                    arr[int(i)] += r["n"]
+        for r in rows:
+            r["ips"] = ips.get(r["id"], [])
+            r["ip_count"] = len({i["ip"] for i in r["ips"] if i["source"] == "api"})
+            r["spark"] = spark.get(r["id"], [0] * 15)
+            r["rate_5m"] = sum(r["spark"][-5:]) / 5
     return JSONResponse(json.loads(json.dumps({"runs": rows}, default=_iso)))
 
 
@@ -466,12 +508,15 @@ def throughput(minutes: int = 60, bucket: int = 1):
 
 @app.get("/api/ips", dependencies=[Depends(need_login)])
 def ips():
+    """Every address seen in the last 7 days. `records` counts runs that used the address, so a run that changed IP appears under both."""
     with db.conn() as c:
         rows = c.execute(
-            """SELECT runner_ip, egress_ip, count(*) AS runs, count(DISTINCT repository) AS repos,
-                      max(last_seen) AS last_seen, coalesce(sum(records),0)::bigint AS records
-               FROM runs WHERE started_at >= now() - interval '7 days'
-               GROUP BY runner_ip, egress_ip ORDER BY max(last_seen) DESC LIMIT 200""").fetchall()
+            """SELECT i.ip, string_agg(DISTINCT i.source, '+') AS sources, count(DISTINCT i.run_id) AS runs,
+                      count(DISTINCT r.repository) AS repos, max(i.last_seen) AS last_seen,
+                      coalesce(sum(r.records), 0)::bigint AS records
+               FROM run_ips i JOIN runs r ON r.id = i.run_id
+               WHERE i.last_seen >= now() - interval '7 days'
+               GROUP BY i.ip ORDER BY max(i.last_seen) DESC LIMIT 200""").fetchall()
     return JSONResponse(json.loads(json.dumps({"ips": rows}, default=_iso)))
 
 

@@ -54,22 +54,32 @@ svg text{font-family:inherit}
 .tblwrap th{position:sticky;top:0;background:var(--panel)}
 .legend{display:flex;gap:16px;font-size:12px;color:var(--dim);margin-top:6px;flex-wrap:wrap}
 .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
-.rn{display:grid;grid-template-columns:78px minmax(0,1.1fr) 56px minmax(0,2fr) 84px 250px 52px;gap:4px 12px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line)}
-.rn:first-of-type{border-top:0}
-.rn .st{font-weight:600}.rn .what{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.rn .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.grp{border:1px solid var(--line);border-radius:10px;margin-top:10px;overflow:hidden;background:var(--panel2)}
+.grp:first-of-type{margin-top:0}
+.gh{display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;width:100%;text-align:left;font:inherit;color:var(--text);background:transparent;border:0;padding:10px 12px;cursor:pointer}
+.gh:hover{background:var(--panel)}.gh .chev{color:var(--dim);width:12px;display:inline-block;transition:transform .15s}.grp.open .chev{transform:rotate(90deg)}
+.gh b{font-weight:700}.gh .sm{color:var(--dim);font-size:12px}.gh .gs{margin-left:auto;display:flex;gap:6px 14px;flex-wrap:wrap;align-items:center;font-size:12px}
+.gp{height:3px;background:var(--bar);display:flex}.gp i{display:block;height:100%}.gp .f{background:var(--accent)}.gp .r{background:var(--ok)}.gp .x{background:var(--bad)}
+.gb{display:none;padding:2px 12px 8px;background:var(--panel)}.grp.open .gb{display:block}
+.rn,.rnh{display:grid;grid-template-columns:84px 54px minmax(0,1fr) 92px 112px 270px 46px;gap:4px 12px;align-items:center}
+.rnh{color:var(--dim);font-size:11px;padding:8px 0 4px}.rnh .n{text-align:right}
+.rn{padding:7px 0;border-top:1px solid var(--line);position:relative}.gb .rn:first-of-type{border-top:0}
+.rn .st{font-weight:600;white-space:nowrap}.rn .what{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rn .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}.rn small{color:var(--dim)}
 .rn .ip{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.rn small{color:var(--dim)}
-.rnh{display:grid;grid-template-columns:78px minmax(0,1.1fr) 56px minmax(0,2fr) 84px 250px 52px;gap:12px;color:var(--dim);font-size:11px;padding-bottom:6px}
-.rnh .n{text-align:right}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;background:var(--dim)}
+.dot.running{background:var(--ok);animation:pulse 1.6s infinite}.dot.stalled,.dot.failed{background:var(--bad)}.dot.finished{background:var(--accent)}
+.spark{display:inline-flex;align-items:center;gap:8px;justify-content:flex-end}.spark svg{width:56px;height:16px}
+.badge{display:inline-block;margin-left:6px;padding:0 6px;border-radius:4px;border:1px solid var(--warn);color:var(--warn);font-size:11px}
+.bump{animation:bump 1.4s ease-out}@keyframes bump{from{background:color-mix(in srgb,var(--ok) 28%,transparent)}to{background:transparent}}
+@media (prefers-reduced-motion:reduce){.bump,.dot.running{animation:none}}
 @media (max-width:860px){
- header{gap:8px;padding:10px 12px}header h1{white-space:nowrap}#updated{display:none}
- .kpis{grid-template-columns:repeat(2,1fr)}
  .rnh{display:none}
- .rn{grid-template-columns:auto 1fr auto;grid-template-areas:"st repo slice" "what what what" "recs ip seen";gap:2px 10px;padding:10px 0}
- .rn>:nth-child(1){grid-area:st}.rn>:nth-child(2){grid-area:repo}.rn>:nth-child(3){grid-area:slice;text-align:right}
- .rn>:nth-child(4){grid-area:what;white-space:normal}.rn>:nth-child(5){grid-area:recs;text-align:left}
- .rn>:nth-child(6){grid-area:ip;color:var(--dim)}.rn>:nth-child(7){grid-area:seen;text-align:right}
+ .rn{grid-template-columns:auto auto 1fr auto;grid-template-areas:"st sl sl seen" "what what what what" "recs spark spark spark" "ip ip ip ip";gap:3px 10px;padding:9px 0}
+ .rn>:nth-child(1){grid-area:st}.rn>:nth-child(2){grid-area:sl;text-align:left}.rn>:nth-child(3){grid-area:what;white-space:normal}
+ .rn>:nth-child(4){grid-area:recs;text-align:left}.rn>:nth-child(5){grid-area:spark;justify-content:flex-start}
+ .rn>:nth-child(6){grid-area:ip;color:var(--dim);white-space:normal}.rn>:nth-child(7){grid-area:seen;text-align:right}
+ .gh .gs{margin-left:0;width:100%}
 }
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{border:1px solid var(--line);border-radius:8px;padding:5px 10px;background:var(--panel2)}
@@ -88,7 +98,7 @@ td.n,th.n{text-align:right}.scroll{overflow-x:auto}
 <div class="chartbar"><div class="seg" id="ranges" role="group" aria-label="time range"></div>
 <div class="seg" id="views" role="group" aria-label="view"><button data-v="chart" aria-pressed="true">Chart</button><button data-v="table" aria-pressed="false">Table</button></div></div>
 <div class="chartwrap" id="chart"></div><div class="lg" id="legend"></div></section>
-<section><h2>Runners</h2><div class="rnh"><span>state</span><span>repository</span><span class="n">slice</span><span>doing now</span><span class="n">records</span><span>ip (api / reported)</span><span class="n">seen</span></div><div id="runs"></div></section>
+<section><h2>Runners</h2><div id="runs"></div></section>
 <section><h2>Repositories</h2><div class="chips" id="repos"></div></section>
 <section><details><summary>Runner IP history, 7 days</summary><div class="scroll"><table id="ips"></table></div></details></section>
 </main>
@@ -115,7 +125,7 @@ function slicesFor(project,runs){
  const latest=mine[0],g=mine.filter(r=>r.repository===latest.repository&&r.gh_run_id===latest.gh_run_id&&r.run_attempt===latest.run_attempt);
  const by={};g.forEach(r=>by[r.job_index]=r);
  let t="";for(let i=0;i<Math.min(latest.total_jobs,60);i++){const r=by[i],st=r?(r.stalled?"stalled":r.state):"none";
-  t+=`<span class="tile ${st}" title="slice ${i}: ${st}${r?`, ${fmt(r.records)} records`:" (not started)"}">${i}</span>`}
+  t+=`<span class="tile ${st}" title="slice ${i+1} of ${latest.total_jobs}: ${st}${r?`, ${fmt(r.records)} records`:" (not started)"}">${i+1}</span>`}
  return `<div class="slices" role="img" aria-label="runner slices for the latest workflow run">${t}</div>`}
 
 const openSet=new Set();
@@ -260,16 +270,48 @@ function initChartControls(){
 }
 let lastOv=null;
 
+const grpOpen=new Map(),prevRec=new Map();
+const rate=n=>n>=10?n.toFixed(0):n.toFixed(1);
+function sparkSvg(a,running){const m=Math.max(1,...a),w=56/a.length;
+ return `<svg viewBox="0 0 56 16" aria-hidden="true">${a.map((v,i)=>{const h=v?Math.max(1.5,v/m*15):0;return v?`<rect x="${i*w+.4}" y="${16-h}" width="${w-.8}" height="${h}" rx=".8" fill="${running?"var(--ok)":"var(--dim)"}"/>`:`<rect x="${i*w+.4}" y="15" width="${w-.8}" height="1" fill="var(--line)"/>`}).join("")}</svg>`}
+function ipCell(r){
+ const cur=esc(r.runner_ip||"-");let extra="";
+ if(r.egress_ip&&r.egress_ip!==r.runner_ip)extra=` <small>(reports ${esc(r.egress_ip)})</small>`;
+ let badge="";
+ if(r.ip_count>1){const hist=r.ips.filter(i=>i.source==="api").map(i=>`${i.ip} from ${new Date(i.first_seen).toLocaleTimeString()}`).join(" → ");
+  badge=`<span class="badge" title="${esc("Changed address mid-run: "+hist)}">IP ×${r.ip_count}</span>`}
+ return `<span class="ip" title="${cur}">${cur}${badge}${extra}</span>`}
+function rowHtml(r){
+ const st=r.stalled?"stalled":r.state,c=r.stalled||r.state==="failed"?"bad":r.state==="running"?"ok":"dim";
+ const prev=prevRec.get(r.id),bump=prev!=null&&r.records>prev?" bump":"";prevRec.set(r.id,r.records);
+ return `<div class="rn${bump}"><span class="st ${c}"><i class="dot ${st}"></i>${st}</span>
+  <span class="n" title="slice ${r.job_index+1} of ${r.total_jobs}">${r.job_index+1}/${r.total_jobs}</span>
+  <span class="what" title="${esc(r.note)}">${esc(r.note||"-")}</span>
+  <span class="n">${fmt(r.records)}${r.errors?` <small class="warn">${r.errors}e</small>`:""}${r.blocked?` <small class="bad">${r.blocked}b</small>`:""}</span>
+  <span class="n spark" title="records per minute, last 15 minutes">${r.state==="running"||r.rate_5m?`<b style="font-weight:600">${rate(r.rate_5m)}</b><small>/min</small>`:""}${sparkSvg(r.spark,r.state==="running"&&!r.stalled)}</span>
+  ${ipCell(r)}<span class="n dim" title="last heard from">${ago(r.last_seen)}</span></div>`}
 function runnerRows(runs){
  if(!runs.length){$("runs").innerHTML='<div class="dim">No runners yet.</div>';return}
- $("runs").innerHTML=runs.slice(0,60).map(r=>{
-  const st=r.stalled?"stalled":r.state,c=r.stalled||r.state==="failed"?"bad":r.state==="running"?"ok":"dim";
-  const repo=r.repository.split("/").pop();
-  const ip=esc(r.runner_ip)+(r.egress_ip&&r.egress_ip!==r.runner_ip?` / ${esc(r.egress_ip)}`:"");
-  return `<div class="rn"><span class="st ${c}">${st}</span><span title="${esc(r.repository)} · ${esc(r.workflow)} #${esc(r.gh_run_id)}">${esc(repo)}<small> · ${esc(r.project)}</small></span>
-  <span class="n">${r.job_index}/${r.total_jobs}</span><span class="what" title="${esc(r.note)}">${esc(r.note||"-")}</span>
-  <span class="n">${fmt(r.records)}${r.errors?` <small class="warn">${r.errors}e</small>`:""}${r.blocked?` <small class="bad">${r.blocked}b</small>`:""}</span>
-  <span class="ip" title="${ip}">${ip}</span><span class="n dim">${ago(r.last_seen)}</span></div>`}).join("")}
+ const groups=new Map();
+ runs.forEach(r=>{const k=[r.project,r.repository,r.gh_run_id,r.run_attempt].join("|");if(!groups.has(k))groups.set(k,{k,runs:[]});groups.get(k).runs.push(r)});
+ const list=[...groups.values()].map(g=>{g.runs.sort((a,b)=>a.job_index-b.job_index);const R=g.runs,f=R[0];
+  Object.assign(g,{f,run:R.filter(r=>r.state==="running"&&!r.stalled).length,stall:R.filter(r=>r.stalled).length,fin:R.filter(r=>r.state==="finished").length,
+   fail:R.filter(r=>r.state==="failed").length,rec:R.reduce((a,r)=>a+r.records,0),rt:R.reduce((a,r)=>a+(r.state==="running"?r.rate_5m:0),0),
+   ipx:R.filter(r=>r.ip_count>1).length,ips:new Set(R.map(r=>r.runner_ip)).size,seen:Math.max(...R.map(r=>+new Date(r.last_seen))),start:Math.min(...R.map(r=>+new Date(r.started_at)))});return g});
+ list.sort((a,b)=>((b.run+b.stall>0)-(a.run+a.stall>0))||b.seen-a.seen);
+ $("runs").innerHTML=`<div class="rnh" style="padding-left:12px;padding-right:12px"><span>state</span><span class="n">slice</span><span>doing now</span><span class="n">records</span><span class="n">rate, 15 min</span><span>ip seen by hub</span><span class="n">heard</span></div>`+
+  list.map(g=>{const f=g.f,total=Math.max(f.total_jobs,g.runs.length),active=g.run+g.stall>0;
+   const open=grpOpen.has(g.k)?grpOpen.get(g.k):active;
+   const bar=`<div class="gp" role="img" aria-label="${g.fin} of ${total} slices finished"><i class="f" style="width:${g.fin/total*100}%"></i><i class="r" style="width:${g.run/total*100}%"></i><i class="x" style="width:${(g.stall+g.fail)/total*100}%"></i></div>`;
+   const chips=[g.run?`<span class="ok">${g.run} running</span>`:"",g.stall?`<span class="bad">${g.stall} stalled</span>`:"",g.fin?`<span style="color:var(--accent)">${g.fin} finished</span>`:"",g.fail?`<span class="bad">${g.fail} failed</span>`:""].filter(Boolean).join(" · ");
+   return `<div class="grp${open?" open":""}" data-g="${esc(g.k)}"><button class="gh" aria-expanded="${open}"><span class="chev">▸</span>
+    <b>${esc(f.repository.split("/").pop())}</b><span class="sm">${esc(f.project)} · run ${esc(f.gh_run_id)}${f.run_attempt>1?"."+f.run_attempt:""}</span>
+    <span class="gs"><span>${chips}</span><span><b>${fmt(g.rec)}</b> <span class="dim">records</span></span>${g.rt?`<span><b>${rate(g.rt)}</b><span class="dim">/min</span></span>`:""}
+    <span class="dim" title="${g.ips} distinct addresses across ${g.runs.length} runners">${g.ips} IP${g.ips>1?"s":""}</span>${g.ipx?`<span class="badge" title="${g.ipx} runner(s) changed address mid-run">IP changed ×${g.ipx}</span>`:""}
+    <span class="dim">started ${ago(g.start)} ago</span></span></button>${bar}
+    <div class="gb">${g.runs.map(rowHtml).join("")}</div></div>`}).join("")}
+document.addEventListener("click",e=>{const h=e.target.closest(".gh");if(!h)return;const g=h.closest(".grp"),k=g.dataset.g,open=!g.classList.contains("open");
+ grpOpen.set(k,open);g.classList.toggle("open",open);h.setAttribute("aria-expanded",open)});
 
 async function tick(){
  try{

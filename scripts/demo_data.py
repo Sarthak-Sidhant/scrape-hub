@@ -9,7 +9,7 @@ from scrape_hub import db
 random.seed(7)
 db.init_schema()
 with db.conn() as c:
-    c.execute("TRUNCATE metrics, batches, records, queue, runs, projects RESTART IDENTITY CASCADE")
+    c.execute("TRUNCATE run_ips, metrics, batches, records, queue, runs, projects RESTART IDENTITY CASCADE")
     c.execute("INSERT INTO projects (name,title,unit_label,record_label,allowed_repos,expected_records) VALUES "
               "('eprocure-fy2526','eProcure FY 2025-26 tenders','organisation','tender','{Sarthak-Sidhant/eprocure-scrape}',47973),"
               "('cppp-aoc','CPPP award of contract','page','award','{Sarthak-Sidhant/results-tenders}',0)")
@@ -36,6 +36,12 @@ with db.conn() as c:
                           (rid, project, m, k, e, b, random.randint(40, 400)))
                 tot += k
             c.execute("UPDATE runs SET records=%s, batches=40, errors=%s, blocked=%s WHERE id=%s", (tot, random.randint(0, 9), random.randint(0, 3), rid))
+    c.execute("INSERT INTO run_ips (run_id, ip, source, first_seen, last_seen, hits) SELECT id, runner_ip, 'api', started_at, last_seen, 40 FROM runs")
+    c.execute("INSERT INTO run_ips (run_id, ip, source, first_seen, last_seen, hits) SELECT id, egress_ip, 'reported', started_at, last_seen, 3 FROM runs")
+    # one runner moves to a new address halfway through
+    c.execute("UPDATE runs SET runner_ip='20.99.99.99' WHERE id=3")
+    c.execute("INSERT INTO run_ips (run_id, ip, source, first_seen, last_seen, hits) VALUES (3,'20.99.99.99','api', now() - interval '12 minutes', now(), 20)")
+    c.execute("UPDATE runs SET gh_run_id='9002' WHERE project='cppp-aoc'")
     for i in range(428):
         st = "done" if i < 130 else "claimed" if i < 138 else "failed" if i in (200, 201, 202) else "pending"
         err = {200: "portal listed 0 of 3592 expected tenders", 201: "12 of 80 tender pages failed", 202: "search failed (RuntimeError: Failed to authenticate after 10 attempts)"}.get(i, "")
