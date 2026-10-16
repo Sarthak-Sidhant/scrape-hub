@@ -549,16 +549,17 @@ def test_known_records_returns_only_stored_ids_with_parsed_fields(client, clean)
     h = hdr()
     rid = start(client, project="resuming")
     client.post(f"/api/v1/runs/{rid}/batches", headers=h, json={"records": [
-        {"record_id": "NEW1", "data": {"details": {"fields": {"tender_type": "Open"}}}},
+        {"record_id": "NEW1", "data": {"details": {"fields": {"tender_title": "Road works"}}}},
+        {"record_id": "EMPTY1", "data": {"details": {"fields": {"tender_title": "", "tender_type": ""}}}},   # the portal's 'session expired' page parsed
         {"record_id": "OLD1", "data": {"details": {"bids": []}}}]})                       # stored by an older parser: no fields
-    out = client.post(f"/api/v1/runs/{rid}/known-records", headers=h, json={"ids": ["NEW1", "OLD1", "NEVER"]}).json()
+    out = client.post(f"/api/v1/runs/{rid}/known-records", headers=h, json={"ids": ["NEW1", "EMPTY1", "OLD1", "NEVER"]}).json()
     assert out == {"known": ["NEW1"]}
 
 
 def test_known_records_is_per_project_and_needs_the_runs_own_repo(client, clean):
     repo = "Sarthak-Sidhant/eprocure-scrape"
     rid = start(client, project="resuming", repo=repo)
-    client.post(f"/api/v1/runs/{rid}/batches", headers=hdr(repo=repo), json={"records": [{"record_id": "A", "data": {"details": {"fields": {}}}}]})
+    client.post(f"/api/v1/runs/{rid}/batches", headers=hdr(repo=repo), json={"records": [{"record_id": "A", "data": {"details": {"fields": {"tender_title": "x"}}}}]})
     other = start(client, project="elsewhere", repo=repo, run_id="9")
     assert client.post(f"/api/v1/runs/{other}/known-records", headers=hdr(repo=repo, run_id="9"), json={"ids": ["A"]}).json() == {"known": []}
     assert client.post(f"/api/v1/runs/{rid}/known-records", headers=hdr(repo=repo), json={"ids": ["A"]}).json() == {"known": ["A"]}

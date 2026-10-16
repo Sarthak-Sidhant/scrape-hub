@@ -273,12 +273,12 @@ def replace_queue(name: str, body: QueueReplace, who: Caller = Depends(caller)):
 
 @app.post("/api/v1/runs/{run_id}/known-records")
 def known_records(run_id: int, body: KnownReq, request: Request, who: Caller = Depends(caller)):
-    """Which of these record ids are already stored with parsed fields, so a scraper resuming a window can skip them."""
+    """Which of these record ids are already stored with real parsed fields (a record with an empty title is a failed capture and is fetched again), so a scraper resuming a window can skip them."""
     with db.conn() as c:
         run = own_run(c, run_id, who)
         seen(c, run_id, request)
         rows = c.execute("""SELECT record_id FROM records WHERE project=%s AND record_id = ANY(%s)
-                            AND data->'details'->'fields' IS NOT NULL""", (run["project"], body.ids)).fetchall()
+                            AND coalesce(data->'details'->'fields'->>'tender_title', '') <> ''""", (run["project"], body.ids)).fetchall()
     return {"known": [r["record_id"] for r in rows]}
 
 
