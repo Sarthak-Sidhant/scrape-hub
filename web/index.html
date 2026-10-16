@@ -1,0 +1,85 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Scrape hub</title><style>
+:root{--bg:#0b0f14;--panel:#111820;--line:#26323f;--text:#d5dde6;--dim:#7d8b99;--accent:#6cb6ff;--ok:#5fcf8a;--warn:#e8b44c;--bad:#ef6a6a;--bar:#1a2430}
+@media (prefers-color-scheme:light){:root{--bg:#f3f5f8;--panel:#fff;--line:#d3dae2;--text:#1d2630;--dim:#66727f;--accent:#1f6fc0;--ok:#2a9d5c;--warn:#b7791f;--bad:#cf3f3f;--bar:#e6ebf1}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:14px;margin:0;letter-spacing:.06em}a{color:var(--accent)}header .sp{flex:1}
+.pill{padding:2px 10px;border-radius:99px;border:1px solid currentColor;font-size:12px;font-weight:600}
+.healthy{color:var(--ok)}.degraded{color:var(--warn)}.unhealthy{color:var(--bad)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.dim{color:var(--dim)}
+main{padding:16px;display:grid;gap:16px;max-width:1400px;margin:0 auto}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;overflow:hidden}
+h2{font-size:12px;margin:0 0 10px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
+.row{display:flex;justify-content:space-between;gap:8px}.big{font-size:22px;font-weight:700}
+.rules{margin:8px 0 0;padding:0;list-style:none}.rules li{padding:1px 0}.rules li::before{content:"\25CF ";}
+.bar{height:8px;background:var(--bar);border-radius:4px;overflow:hidden;display:flex;margin:6px 0}
+.bar i{display:block;height:100%}.done{background:var(--ok)}.claimed{background:var(--accent)}.failed{background:var(--bad)}.pending{background:var(--line)}
+.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;white-space:nowrap}
+th,td{text-align:left;padding:5px 10px;border-bottom:1px solid var(--line)}th{color:var(--dim);font-weight:500}
+td.n,th.n{text-align:right}svg{width:100%;height:150px;display:block}
+.tag{font-size:11px;padding:0 6px;border-radius:4px;border:1px solid var(--line);color:var(--dim)}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--dim);margin-top:6px;flex-wrap:wrap}
+.legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+</style></head><body>
+<header><h1>SCRAPE HUB</h1><span id="verdict" class="pill dim">loading</span><span class="sp"></span>
+<span class="dim" id="updated"></span><a href="/logout">sign out</a></header>
+<main>
+<div class="cards" id="projects"></div>
+<section><h2>Throughput, last hour (records / minute)</h2><div id="chart"></div>
+<div class="legend"><span><b style="background:var(--ok)"></b>records</span><span><b style="background:var(--warn)"></b>errors</span><span><b style="background:var(--bad)"></b>blocked</span></div></section>
+<section><h2>Repositories</h2><div class="scroll"><table id="repos"></table></div></section>
+<section><h2>Runners</h2><div class="scroll"><table id="runs"></table></div></section>
+<section><h2>Runner IPs (7 days)</h2><div class="scroll"><table id="ips"></table></div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const fmt=n=>Number(n).toLocaleString();
+const ago=t=>{if(!t)return"-";const s=Math.max(0,(Date.now()-new Date(t))/1000);
+ return s<90?Math.round(s)+"s ago":s<5400?Math.round(s/60)+"m ago":s<172800?Math.round(s/3600)+"h ago":Math.round(s/86400)+"d ago"};
+const dur=s=>s<90?s+"s":s<5400?Math.round(s/60)+"m":(s/3600).toFixed(1)+"h";
+async function j(u){const r=await fetch(u);if(r.status===401){location="/login";throw 0}return r.json()}
+
+function projectCard(p){
+ const q=p.stats.queue||{},tot=Object.values(q).reduce((a,b)=>a+b,0);
+ const bar=tot?`<div class="bar" role="img" aria-label="queue progress">${["done","claimed","failed","pending"].map(k=>`<i class="${k}" style="width:${(q[k]||0)/tot*100}%"></i>`).join("")}</div>
+  <div class="dim">${fmt(q.done||0)} done · ${fmt(q.claimed||0)} in flight · ${fmt(q.failed||0)} failed · ${fmt(q.pending||0)} pending</div>`:"";
+ return `<section><div class="row"><h2>${esc(p.project)}</h2><span class="pill ${p.verdict}">${p.verdict}</span></div>
+ <div class="row"><div><div class="big">${p.stats.rate_now.toFixed(0)}</div><div class="dim">records / min</div></div>
+ <div><div class="big">${p.stats.running}</div><div class="dim">running${p.stats.stalled?` · <span class="bad">${p.stats.stalled} stalled</span>`:""}</div></div>
+ <div><div class="big">${fmt(p.records_total)}</div><div class="dim">records stored</div></div></div>${bar}
+ <ul class="rules">${p.rules.map(r=>`<li class="${r.level}"><span style="color:var(--text)">${esc(r.message)}</span></li>`).join("")}</ul></section>`}
+
+function chart(points){
+ if(!points.length){$("chart").innerHTML='<div class="dim">no uploads in this window</div>';return}
+ const by={};points.forEach(p=>{(by[p.t]??={r:0,e:0,b:0});by[p.t].r+=p.records;by[p.t].e+=p.errors;by[p.t].b+=p.blocked});
+ const now=Math.floor(Date.now()/60000)*60,mins=[];for(let i=59;i>=0;i--)mins.push(now-i*60);
+ const data=mins.map(m=>by[m]||{r:0,e:0,b:0});
+ const max=Math.max(1,...data.map(d=>d.r)),W=600,H=130,bw=W/60;
+ const bars=data.map((d,i)=>{const h=d.r/max*H;return `<rect x="${i*bw+1}" y="${H-h}" width="${bw-2}" height="${h}" fill="var(--ok)"><title>${new Date(mins[i]*1000).toLocaleTimeString()}: ${d.r} records, ${d.e} errors, ${d.b} blocked</title></rect>`+
+  (d.e?`<rect x="${i*bw+1}" y="${H+4}" width="${bw-2}" height="4" fill="var(--warn)"/>`:"")+(d.b?`<rect x="${i*bw+1}" y="${H+10}" width="${bw-2}" height="4" fill="var(--bad)"/>`:"")}).join("");
+ $("chart").innerHTML=`<svg viewBox="0 0 ${W} ${H+16}" preserveAspectRatio="none" role="img" aria-label="records per minute">${bars}</svg><div class="dim">peak ${fmt(max)}/min</div>`}
+
+function table(el,head,rows){el.innerHTML=`<tr>${head.map(h=>`<th class="${h[1]||""}">${h[0]}</th>`).join("")}</tr>`+
+ (rows.length?rows.join(""):`<tr><td class="dim" colspan="${head.length}">nothing yet</td></tr>`)}
+
+async function tick(){
+ try{
+ const [ov,runs,tp,ips]=await Promise.all([j("/api/overview"),j("/api/runs?limit=200"),j("/api/throughput?minutes=60"),j("/api/ips")]);
+ const v=$("verdict");v.textContent=ov.projects.length?ov.verdict:"no data";v.className="pill "+(ov.projects.length?ov.verdict:"dim");
+ $("projects").innerHTML=ov.projects.map(projectCard).join("")||'<section class="dim">No projects have reported yet.</section>';
+ chart(tp.points);
+ table($("repos"),[["repository"],["auth"],["running","n"],["runs","n"],["records","n"],["last seen"]],
+  ov.repos.map(r=>`<tr><td>${esc(r.repository)}</td><td><span class="tag" title="${r.auth_kind==="oidc"?"identity verified by GitHub":"self-reported"}">${r.auth_kind==="oidc"?"verified":"self-reported"}</span></td><td class="n">${r.running}</td><td class="n">${r.runs}</td><td class="n">${fmt(r.records)}</td><td>${ago(r.last_seen)}</td></tr>`));
+ table($("runs"),[["state"],["project"],["repository"],["slice","n"],["run"],["runner ip"],["records","n"],["errors","n"],["blocked","n"],["age","n"],["last seen"],["note"]],
+  runs.runs.map(r=>{const st=r.stalled?"stalled":r.state,c=r.stalled||r.state==="failed"?"bad":r.state==="running"?"ok":"dim";
+   return `<tr><td class="${c}">${st}</td><td>${esc(r.project)}</td><td>${esc(r.repository)}</td><td class="n">${r.job_index}/${r.total_jobs}</td><td>${esc(r.gh_run_id)}.${r.run_attempt}</td><td>${esc(r.runner_ip)}${r.egress_ip&&r.egress_ip!==r.runner_ip?` <span class="dim">(${esc(r.egress_ip)})</span>`:""}</td><td class="n">${fmt(r.records)}</td><td class="n">${r.errors}</td><td class="n">${r.blocked}</td><td class="n">${dur(r.age_s)}</td><td>${ago(r.last_seen)}</td><td class="dim">${esc(r.note)}</td></tr>`}));
+ table($("ips"),[["seen by api"],["reported by runner"],["runs","n"],["repos","n"],["records","n"],["last seen"]],
+  ips.ips.map(r=>`<tr><td>${esc(r.runner_ip)}</td><td>${esc(r.egress_ip||"-")}</td><td class="n">${r.runs}</td><td class="n">${r.repos}</td><td class="n">${fmt(r.records)}</td><td>${ago(r.last_seen)}</td></tr>`));
+ $("updated").textContent="updated "+new Date().toLocaleTimeString();
+ }catch(e){if(e!==0)$("updated").textContent="update failed, retrying"}
+}
+tick();setInterval(tick,4000);
+</script></body></html>
