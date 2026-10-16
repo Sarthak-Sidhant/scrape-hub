@@ -473,3 +473,57 @@ def test_upload_urls_say_so_when_storage_is_not_configured(client, clean, monkey
     monkeypatch.setattr(config, "R2_BUCKET", "")
     rid = start(client, project="stored")
     assert client.post(f"/api/v1/runs/{rid}/upload-urls", json={"files": [{"path": "x.bin"}]}, headers=hdr()).status_code == 503
+
+
+# ---------------------------------------------------------------- failures: record, de-duplicate, clear, summarise, export
+
+def post_failures(client, rid, failures=(), clear=(), records=()):
+    return client.post(f"/api/v1/runs/{rid}/batches", json={"failures": list(failures), "clear": list(clear),
+                                                           "records": [{"record_id": r, "data": {}} for r in records]}, headers=hdr())
+
+
+def test_failures_are_stored_once_per_thing_and_count_attempts(client, clean, login):
+    rid = start(client, project="failing")
+    f = {"kind": "document", "key": "2019_X_1/report.pdf", "reason": "portal refused", "detail": {"org_name": "DRDO", "window": ["01/01/2019", "31/12/2019"], "document": "report.pdf", "declared_bytes": 100}}
+    post_failures(client, rid, [f])
+    post_failures(client, rid, [{**f, "reason": "portal refused again"}])
+    rows = login.get("/api/projects/failing/failures").json()
+    assert len(rows["failures"]) == 1 and rows["failures"][0]["attempts"] == 2 and rows["failures"][0]["reason"] == "portal refused again"
+    assert rows["summary"]["kinds"][0]["kind"] == "document" and rows["summary"]["orgs"][0] == {"org": "DRDO", "n": 1}
+
+
+def test_a_stored_tender_clears_its_tender_failure_and_clear_removes_others(client, clean, login):
+    rid = start(client, project="clearing")
+    post_failures(client, rid, [{"kind": "tender", "key": "T1", "reason": "timeout"}, {"kind": "tender", "key": "T2", "reason": "timeout"},
+                                {"kind": "document", "key": "T9/a.pdf", "reason": "refused"}])
+    assert len(login.get("/api/projects/clearing/failures").json()["failures"]) == 3
+    post_failures(client, rid, records=["T1"])                                              # T1 now stored successfully
+    post_failures(client, rid, clear=[{"kind": "document", "key": "T9/a.pdf"}])             # the document now downloads
+    left = login.get("/api/projects/clearing/failures").json()["failures"]
+    assert [(f["kind"], f["key"]) for f in left] == [("tender", "T2")]
+
+
+def test_failures_can_be_filtered_by_kind_and_need_a_login(client, clean, login):
+    rid = start(client, project="filtering")
+    post_failures(client, rid, [{"kind": "document", "key": "a"}, {"kind": "tender", "key": "b"}])
+    assert [f["key"] for f in login.get("/api/projects/filtering/failures?kind=tender").json()["failures"]] == ["b"]
+    client.cookies.clear()
+    assert client.get("/api/projects/filtering/failures").status_code == 401
+    assert client.get("/api/projects/filtering/failures.csv").status_code == 401
+
+
+def test_csv_export_has_the_columns_and_neutralises_spreadsheet_formulas(client, clean, login):
+    import csv, io
+    rid = start(client, project="exporting")
+    post_failures(client, rid, [{"kind": "document", "key": "T1/r.pdf", "reason": "=HYPERLINK(\"http://evil\")",
+                                 "detail": {"org_name": "+Org", "window": ["01/01/2019", "31/12/2019"], "document": "r.pdf", "declared_bytes": 5}}])
+    r = login.get("/api/projects/exporting/failures.csv")
+    assert r.headers["content-type"].startswith("text/csv") and "exporting-failures.csv" in r.headers["content-disposition"]
+    rows = list(csv.reader(io.StringIO(r.text)))
+    assert rows[0][:8] == ["kind", "key", "reason", "organisation", "window_from", "window_to", "document", "declared_bytes"]
+    assert rows[1][2].startswith("'=") and rows[1][3] == "'+Org" and rows[1][4:8] == ["01/01/2019", "31/12/2019", "r.pdf", "5"]
+
+
+def test_bad_failure_kind_is_rejected(client, clean):
+    rid = start(client, project="strict")
+    assert post_failures(client, rid, [{"kind": "Bad Kind!", "key": "x"}]).status_code == 422

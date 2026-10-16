@@ -118,6 +118,7 @@ class HubClient(_Auth):
         self.pending = []
         self.errors = self.blocked = 0
         self.metrics = Counter()
+        self.failures, self.cleared = [], []
         self.run_id = self.call("POST", "/api/v1/runs", {
             "project": project, "job_index": job_index, "total_jobs": total_jobs,
             "egress_ip": self._egress_ip(), "note": note})["run_id"]
@@ -152,23 +153,38 @@ class HubClient(_Auth):
         with self.lock:
             self.metrics[name] += value
 
+    def failure(self, kind, key, reason="", **detail):
+        """Record something that could not be fetched, e.g. hub.failure("document", "2018_X_1/report.pdf", "portal refused", org_name="..").
+        One row per (kind, key); reporting it again updates the row and counts another attempt."""
+        with self.lock:
+            self.failures.append({"kind": kind, "key": str(key)[:300], "reason": str(reason)[:500], "detail": detail})
+
+    def clear_failure(self, kind, key):
+        """The thing that failed before has now succeeded: remove it from the failures list."""
+        with self.lock:
+            self.cleared.append({"kind": kind, "key": str(key)[:300]})
+
     def flush(self, note=None):
         with self.lock:
             recs, err, blk, met = self.pending, self.errors, self.blocked, dict(self.metrics)
+            fails, clr = self.failures[:500], self.cleared[:2000]
+            self.failures, self.cleared = self.failures[500:], self.cleared[2000:]
             self.pending, self.errors, self.blocked, self.metrics = [], 0, 0, Counter()
-        if not (recs or err or blk or met or note):
+        if not (recs or err or blk or met or note or fails or clr):
             return
         t0 = time.time()
         try:
             self.call("POST", f"/api/v1/runs/{self.run_id}/batches",
                       {"records": recs, "errors": err, "blocked": blk, "note": note, "metrics": met,
-                       "latency_ms": int((time.time() - t0) * 1000)})
+                       "failures": fails, "clear": clr, "latency_ms": int((time.time() - t0) * 1000)})
         except Exception:
             with self.lock:  # keep the data for the next flush
                 self.pending = recs + self.pending
                 self.errors += err
                 self.blocked += blk
                 self.metrics.update(met)
+                self.failures = fails + self.failures
+                self.cleared = clr + self.cleared
             raise
 
     def _heartbeat_loop(self):

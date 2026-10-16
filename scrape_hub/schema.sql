@@ -105,3 +105,19 @@ INSERT INTO run_ips (run_id, ip, source, first_seen, last_seen)
 
 -- Live knobs the dashboard sets and runners read back on every call: {threads, delay_ms, paused, auto_backoff}.
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}';
+
+-- Everything a scraper could not get, one row per thing: a document the portal refused, a tender that errored, ...
+-- Re-reporting the same (project, kind, key) updates the row; a later success clears it.
+CREATE TABLE IF NOT EXISTS failures (
+    project    TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    reason     TEXT NOT NULL DEFAULT '',
+    detail     JSONB NOT NULL DEFAULT '{}',
+    run_id     BIGINT REFERENCES runs(id) ON DELETE SET NULL,
+    first_seen TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_seen  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    attempts   INT NOT NULL DEFAULT 1,
+    PRIMARY KEY (project, kind, key)
+);
+CREATE INDEX IF NOT EXISTS failures_kind_seen ON failures (project, kind, last_seen);

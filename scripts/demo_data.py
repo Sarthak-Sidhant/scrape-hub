@@ -9,7 +9,7 @@ from scrape_hub import db
 random.seed(7)
 db.init_schema()
 with db.conn() as c:
-    c.execute("TRUNCATE run_ips, metrics, batches, records, queue, runs, projects RESTART IDENTITY CASCADE")
+    c.execute("TRUNCATE failures, run_ips, metrics, batches, records, queue, runs, projects RESTART IDENTITY CASCADE")
     c.execute("INSERT INTO projects (name,title,unit_label,record_label,allowed_repos,expected_records) VALUES "
               "('eprocure-fy2526','eProcure FY 2025-26 tenders','organisation','tender','{Sarthak-Sidhant/eprocure-scrape}',47973),"
               "('cppp-aoc','CPPP award of contract','page','award','{Sarthak-Sidhant/results-tenders}',0)")
@@ -57,6 +57,12 @@ with db.conn() as c:
     past("8003", "cppp-aoc", "Sarthak-Sidhant/results-tenders", 4, ["failed"], 20, 2, 0)
     c.execute("INSERT INTO run_ips (run_id, ip, source) SELECT id, runner_ip, 'api' FROM runs WHERE gh_run_id IN ('8001','8002','8003') ON CONFLICT DO NOTHING")
     c.execute("INSERT INTO run_ips (run_id, ip, source) SELECT id, '20.8.8.8', 'api' FROM runs WHERE gh_run_id='8002' AND job_index=1 ON CONFLICT DO NOTHING")
+    reason = "the portal's download service failed for this file (it redirects to its generic error page, which says 'session expired'; a real browser gets the same page, so it is not something the scraper can fix)"
+    for i, org in enumerate(["Defence Research and Development Organisation"] * 9 + ["National Testing Agency"] * 4 + ["DG,BSF,MHA"] * 2):
+        c.execute("INSERT INTO failures (project, kind, key, reason, detail, attempts) VALUES ('eprocure-tenders', 'document', %s, %s, %s::jsonb, 1)",
+                  (f"2019_X_{i}/techsummary_{i}.pdf", reason, json.dumps({"org_name": org, "window": ["01/01/2019", "31/12/2019"], "document": f"techsummary_{i}.pdf", "declared_bytes": 224245})))
+    c.execute("INSERT INTO failures (project, kind, key, reason, detail, attempts) VALUES ('eprocure-tenders', 'tender', '2019_X_77', 'TimeoutError: slow', %s::jsonb, 2)", (json.dumps({"org_name": "National Testing Agency"}),))
+    c.execute("INSERT INTO projects (name,title,unit_label,record_label,allowed_repos) VALUES ('eprocure-tenders','eProcure tenders 2011-2026','window','tender','{Sarthak-Sidhant/eprocure-scrape}') ON CONFLICT DO NOTHING")
     for i in range(428):
         st = "done" if i < 130 else "claimed" if i < 138 else "failed" if i in (200, 201, 202) else "pending"
         err = {200: "portal listed 0 of 3592 expected tenders", 201: "12 of 80 tender pages failed", 202: "search failed (RuntimeError: Failed to authenticate after 10 attempts)"}.get(i, "")

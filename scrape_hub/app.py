@@ -65,6 +65,18 @@ class Record(BaseModel):
     data: Any
 
 
+class FailureIn(BaseModel):
+    kind: str = Field(min_length=1, max_length=32, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    key: str = Field(min_length=1, max_length=300)
+    reason: str = Field(default="", max_length=500)
+    detail: dict = {}
+
+
+class FailureKey(BaseModel):
+    kind: str = Field(min_length=1, max_length=32)
+    key: str = Field(min_length=1, max_length=300)
+
+
 class BatchIn(BaseModel):
     records: list[Record] = []
     errors: int = 0
@@ -73,6 +85,8 @@ class BatchIn(BaseModel):
     note: Optional[str] = None
     metrics: dict[str, float] = {}
     egress_ip: str = ""
+    failures: list[FailureIn] = Field(default=[], max_length=500)
+    clear: list[FailureKey] = Field(default=[], max_length=2000)   # failures that no longer apply (the thing now succeeded)
 
 
 class Finish(BaseModel):
@@ -332,6 +346,18 @@ def post_batch(run_id: int, body: BatchIn, request: Request, who: Caller = Depen
                        ON CONFLICT (project, record_id) DO UPDATE SET data=EXCLUDED.data, run_id=EXCLUDED.run_id, scraped_at=now()""",
                     [(run["project"], r.record_id, json.dumps(r.data), run_id) for r in body.records],
                 )
+        if body.records:   # a tender that is now stored is no longer a tender failure
+            c.execute("DELETE FROM failures WHERE project=%s AND kind='tender' AND key = ANY(%s)", (run["project"], [r.record_id for r in body.records]))
+        if body.clear:
+            c.execute("DELETE FROM failures WHERE project=%s AND (kind, key) IN (SELECT * FROM unnest(%s::text[], %s::text[]))",
+                      (run["project"], [f.kind for f in body.clear], [f.key for f in body.clear]))
+        if body.failures:
+            with c.cursor() as cur:
+                cur.executemany(
+                    """INSERT INTO failures (project, kind, key, reason, detail, run_id) VALUES (%s,%s,%s,%s,%s::jsonb,%s)
+                       ON CONFLICT (project, kind, key) DO UPDATE SET reason=EXCLUDED.reason, detail=EXCLUDED.detail,
+                           run_id=EXCLUDED.run_id, last_seen=now(), attempts=failures.attempts+1""",
+                    [(run["project"], f.kind, f.key, f.reason, json.dumps(f.detail), run_id) for f in body.failures])
         n = len(body.records)
         c.execute(
             "INSERT INTO batches (run_id, project, records, errors, blocked, latency_ms) VALUES (%s,%s,%s,%s,%s,%s)",
@@ -550,12 +576,13 @@ def project_detail(name: str):
                FROM metrics WHERE project=%s AND at > now() - interval '1 hour' GROUP BY name ORDER BY name""", (name,)).fetchall()
         fresh = c.execute("SELECT max(scraped_at) AS newest, count(*) AS n FROM records WHERE project=%s", (name,)).fetchone()
         effective = effective_settings(c, name)
+        fsum = failure_summary(c, name)
         stats = project_stats(c, name)
         prog = progress(c, name, stats)
     return JSONResponse(json.loads(json.dumps({"project": meta, "failed": failed, "inflight": inflight, "metrics": mets,
                                                "newest_record": fresh["newest"], "records": fresh["n"],
                                                "effective": effective, "settings": {**DEFAULT_SETTINGS, **(meta.get("settings") or {})},
-                                               "max_threads": config.MAX_THREADS, **prog}, default=_iso)))
+                                               "max_threads": config.MAX_THREADS, "failures": fsum, **prog}, default=_iso)))
 
 
 @app.post("/api/projects/{name}/settings", dependencies=[Depends(need_login)])
@@ -566,6 +593,49 @@ def set_settings(name: str, body: SettingsIn):
             raise HTTPException(404, "unknown project")
         c.execute("UPDATE projects SET settings=%s::jsonb WHERE name=%s", (json.dumps(body.model_dump()), name))
         return effective_settings(c, name)
+
+
+def failure_summary(c, name: str) -> dict:
+    kinds = c.execute("SELECT kind, count(*)::int AS n, max(last_seen) AS last_seen FROM failures WHERE project=%s GROUP BY kind ORDER BY n DESC", (name,)).fetchall()
+    reasons = c.execute("""SELECT kind, left(reason, 110) AS reason, count(*)::int AS n FROM failures WHERE project=%s
+                           GROUP BY 1, 2 ORDER BY n DESC LIMIT 8""", (name,)).fetchall()
+    orgs = c.execute("""SELECT coalesce(detail->>'org_name', '?') AS org, count(*)::int AS n FROM failures WHERE project=%s
+                        GROUP BY 1 ORDER BY n DESC LIMIT 8""", (name,)).fetchall()
+    return {"kinds": kinds, "reasons": reasons, "orgs": orgs}
+
+
+@app.get("/api/projects/{name}/failures", dependencies=[Depends(need_login)])
+def failures_api(name: str, kind: str = "", limit: int = 100, offset: int = 0):
+    limit, offset = min(max(limit, 1), 500), max(offset, 0)
+    with db.conn() as c:
+        rows = c.execute("""SELECT kind, key, reason, detail, attempts, first_seen, last_seen FROM failures
+                            WHERE project=%s AND (%s = '' OR kind = %s) ORDER BY last_seen DESC LIMIT %s OFFSET %s""",
+                         (name, kind, kind, limit, offset)).fetchall()
+        summary = failure_summary(c, name)
+    return JSONResponse(json.loads(json.dumps({"summary": summary, "failures": rows}, default=_iso)))
+
+
+def csv_cell(v):
+    """Spreadsheet formulas in scraped text must not run when the CSV is opened."""
+    v = "" if v is None else str(v)
+    return "'" + v if v[:1] in ("=", "+", "-", "@", "\t", "\r") else v
+
+
+@app.get("/api/projects/{name}/failures.csv", dependencies=[Depends(need_login)])
+def failures_csv(name: str, kind: str = ""):
+    import csv
+    import io
+    with db.conn() as c:
+        rows = c.execute("""SELECT kind, key, reason, detail, attempts, first_seen, last_seen FROM failures
+                            WHERE project=%s AND (%s = '' OR kind = %s) ORDER BY kind, key""", (name, kind, kind)).fetchall()
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["kind", "key", "reason", "organisation", "window_from", "window_to", "document", "declared_bytes", "attempts", "first_seen", "last_seen"])
+    for r in rows:
+        d = r["detail"] or {}
+        w.writerow([csv_cell(x) for x in (r["kind"], r["key"], r["reason"], d.get("org_name"), (d.get("window") or ["", ""])[0], (d.get("window") or ["", ""])[1],
+                                         d.get("document"), d.get("declared_bytes"), r["attempts"], r["first_seen"].isoformat(), r["last_seen"].isoformat())])
+    return Response(buf.getvalue(), media_type="text/csv", headers={"Content-Disposition": f'attachment; filename="{name}-failures.csv"'})
 
 
 @app.post("/api/projects/{name}/retry-failed", dependencies=[Depends(need_login)])
