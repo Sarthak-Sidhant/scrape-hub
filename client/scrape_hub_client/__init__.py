@@ -17,6 +17,7 @@ In a workflow, grant `permissions: id-token: write`; the client then mints a sho
 hub's audience, which is how the hub knows the real repository. Outside Actions, set SCRAPE_HUB_TOKEN (the hub's
 legacy token) and SCRAPE_HUB_REPO.
 """
+import hashlib
 import os
 import threading
 import time
@@ -195,6 +196,37 @@ class HubClient(_Auth):
         self.flush()
         self.call("POST", f"/api/v1/runs/{self.run_id}/complete",
                   {"keys": list(keys), "status": status, "error": error, "fetched": fetched})
+
+    def upload_many(self, files, attempts=3):
+        """Store files in the hub's object storage. files: [(path, bytes, content_type)]; path is relative to this project.
+
+        One call to the hub gets a one-time upload link per file; the bytes then go straight to storage (the hub never sees them).
+        Each upload is checked against the storage's checksum of what it received. Returns [{path, key, bytes, md5, sha256}].
+        Raises if a file still fails after `attempts` tries.
+        """
+        links = self.call("POST", f"/api/v1/runs/{self.run_id}/upload-urls",
+                          {"files": [{"path": p, "content_type": ct} for p, _, ct in files]})["urls"]
+        out = []
+        for (path, data, ctype), link in zip(files, links):
+            md5 = hashlib.md5(data).hexdigest()
+            last = None
+            for i in range(attempts):
+                try:
+                    r = requests.put(link["url"], data=data, headers=link["headers"], timeout=180)
+                    etag = r.headers.get("ETag", "").strip('"')
+                    if r.status_code in (200, 201) and (not etag or etag == md5):
+                        break
+                    last = RuntimeError(f"upload of {path}: HTTP {r.status_code}, etag {etag or '-'} vs md5 {md5}")
+                except requests.RequestException as e:
+                    last = e
+                time.sleep(2 ** i)
+            else:
+                self.metric("upload_failed")
+                raise last
+            self.metric("uploaded_files")
+            self.metric("uploaded_bytes", len(data))
+            out.append({"path": path, "key": link["key"], "bytes": len(data), "md5": md5, "sha256": hashlib.sha256(data).hexdigest()})
+        return out
 
     def note(self, text):
         self.call("POST", f"/api/v1/runs/{self.run_id}/heartbeat", {"note": text[:200]})

@@ -107,6 +107,15 @@ class QueueItem(BaseModel):
     payload: dict = {}
 
 
+class UploadFile(BaseModel):
+    path: str = Field(min_length=1, max_length=300)
+    content_type: str = Field(default="application/octet-stream", max_length=100)
+
+
+class UploadRequest(BaseModel):
+    files: list[UploadFile] = Field(min_length=1, max_length=60)
+
+
 class QueueReplace(BaseModel):
     remove: list[str] = []
     add: list[QueueItem] = []
@@ -239,6 +248,42 @@ def replace_queue(name: str, body: QueueReplace, who: Caller = Depends(caller)):
                     (name, it.key, it.partition_id if it.partition_id is not None else zlib.crc32(it.key.encode()) % 1_000_000, json.dumps(it.payload)))
                 added += cur.rowcount
     return {"removed": len(keys), "added": added}
+
+
+PATH_RE = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
+_s3 = None
+
+
+def s3_client():
+    global _s3
+    if _s3 is None:
+        import boto3
+        from botocore.config import Config
+        _s3 = boto3.client("s3", endpoint_url=config.R2_ENDPOINT, aws_access_key_id=config.R2_ACCESS_KEY_ID,
+                           aws_secret_access_key=config.R2_SECRET_ACCESS_KEY, region_name="auto",
+                           config=Config(signature_version="s3v4", s3={"addressing_style": "path"}))
+    return _s3
+
+
+@app.post("/api/v1/runs/{run_id}/upload-urls")
+def upload_urls(run_id: int, body: UploadRequest, request: Request, who: Caller = Depends(caller)):
+    """One-time upload links for the run's project. The runner PUTs the bytes straight to object storage, so neither the
+    storage keys nor the data pass through GitHub or this server. Objects can only be written under `<project>/`."""
+    if not (config.R2_BUCKET and config.R2_ENDPOINT and config.R2_ACCESS_KEY_ID):
+        raise HTTPException(503, "object storage is not configured on the hub")
+    for f in body.files:
+        if not PATH_RE.match(f.path) or any(seg in (".", "..") for seg in f.path.split("/")):
+            raise HTTPException(422, f"bad path {f.path!r}: use letters, digits . _ - and / between folders")
+    with db.conn() as c:
+        run = own_run(c, run_id, who)
+        seen(c, run_id, request)
+    client, out = s3_client(), []
+    for f in body.files:
+        key = f"{run['project']}/{f.path}"
+        url = client.generate_presigned_url("put_object", Params={"Bucket": config.R2_BUCKET, "Key": key, "ContentType": f.content_type},
+                                            ExpiresIn=config.R2_PRESIGN_SECONDS, HttpMethod="PUT")
+        out.append({"path": f.path, "key": key, "url": url, "headers": {"Content-Type": f.content_type}})
+    return {"urls": out, "expires_in": config.R2_PRESIGN_SECONDS}
 
 
 def own_run(c, run_id: int, who: Caller):

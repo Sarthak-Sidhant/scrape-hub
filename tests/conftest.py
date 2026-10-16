@@ -19,6 +19,7 @@ os.environ["OIDC_AUDIENCE"] = "https://scrape.test"
 os.environ["SCRAPE_LEGACY_TOKEN"] = "legacy-secret"
 os.environ["STATUS_PASSWORD_FILE"] = os.path.join(_tmp, "password")
 os.environ["STALL_AFTER_S"] = "300"
+os.environ.update(R2_ENDPOINT="https://acct.r2.example.com", R2_BUCKET="test-bucket", R2_ACCESS_KEY_ID="AKIATEST", R2_SECRET_ACCESS_KEY="secret", R2_PRESIGN_SECONDS="900")
 
 _salt = bytes(range(16))
 _h = hashlib.scrypt(b"hunter2hunter2", salt=_salt, n=2 ** 14, r=8, p=1, dklen=32)

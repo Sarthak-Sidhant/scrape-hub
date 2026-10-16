@@ -437,3 +437,39 @@ def test_replace_refuses_if_an_item_was_already_claimed_and_changes_nothing(clie
     assert r.status_code == 409
     with db.conn() as c:
         assert {x["key"] for x in c.execute("SELECT key FROM queue").fetchall()} == {"a", "b"}          # nothing was deleted or added
+
+
+# ---------------------------------------------------------------- upload links for object storage
+
+def test_upload_urls_are_scoped_to_the_project_and_expire(client, clean):
+    rid = start(client, project="stored")
+    out = client.post(f"/api/v1/runs/{rid}/upload-urls", json={"files": [
+        {"path": "pages/2018/204/2018_X_1_1.json.gz", "content_type": "application/gzip"},
+        {"path": "docs/2018/204/2018_X_1_1/techsummary_1.pdf", "content_type": "application/pdf"}]}, headers=hdr()).json()
+    assert out["expires_in"] == 900 and len(out["urls"]) == 2
+    u = out["urls"][0]
+    assert u["key"] == "stored/pages/2018/204/2018_X_1_1.json.gz"                       # forced under the project's own folder
+    assert u["url"].startswith("https://acct.r2.example.com/test-bucket/stored/pages/")  # path-style, on the storage endpoint
+    assert "X-Amz-Expires=900" in u["url"] and "X-Amz-Signature=" in u["url"] and u["headers"] == {"Content-Type": "application/gzip"}
+    assert "AKIATEST" in u["url"] and "secret" not in u["url"]                           # the secret key itself never leaves the hub
+
+
+@pytest.mark.parametrize("bad", ["../etc/passwd", "/abs/path", "a//b", "a/./b", "a/../b", "spaces not allowed.pdf", "a/b/", ""])
+def test_upload_paths_cannot_escape_or_be_malformed(client, clean, bad):
+    rid = start(client, project="stored")
+    r = client.post(f"/api/v1/runs/{rid}/upload-urls", json={"files": [{"path": bad}]}, headers=hdr())
+    assert r.status_code == 422
+
+
+def test_upload_urls_need_the_runs_own_repo_and_a_login(client, clean):
+    rid = start(client, project="stored", repo="Sarthak-Sidhant/eprocure-scrape")
+    body = {"files": [{"path": "x.bin"}]}
+    assert client.post(f"/api/v1/runs/{rid}/upload-urls", json=body, headers=hdr(repo="Sarthak-Sidhant/other")).status_code == 404
+    assert client.post(f"/api/v1/runs/{rid}/upload-urls", json=body).status_code == 401
+
+
+def test_upload_urls_say_so_when_storage_is_not_configured(client, clean, monkeypatch):
+    from scrape_hub import config
+    monkeypatch.setattr(config, "R2_BUCKET", "")
+    rid = start(client, project="stored")
+    assert client.post(f"/api/v1/runs/{rid}/upload-urls", json={"files": [{"path": "x.bin"}]}, headers=hdr()).status_code == 503
