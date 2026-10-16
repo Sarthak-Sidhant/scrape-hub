@@ -158,7 +158,7 @@ def effective_settings(c, project: str) -> dict:
     """What runners should actually do right now: the saved settings, backed off if the target is pushing back.
 
     Backoff (when auto_backoff is on): in the last 3 minutes, if over 10% of work was blocked (with enough samples) or at least
-    5 HTTP 429/403/503 responses were counted, halve the threads (min 1) and enforce at least 500 ms between requests.
+    5 HTTP 429/403/503 responses were counted, or dropped connections exceed half the records stored, halve the threads (min 1) and enforce at least 500 ms between requests.
     """
     row = c.execute("SELECT settings FROM projects WHERE name=%s", (project,)).fetchone()
     saved = {**DEFAULT_SETTINGS, **((row or {}).get("settings") or {})}
@@ -168,10 +168,13 @@ def effective_settings(c, project: str) -> dict:
                          WHERE project=%s AND at > now() - interval '3 minutes'""", (project,)).fetchone()
         m = c.execute("""SELECT coalesce(sum(value),0) AS n FROM metrics WHERE project=%s AND name IN ('http_429','http_403','http_503')
                          AND at > now() - interval '3 minutes'""", (project,)).fetchone()
-        b, r, n = int(w["b"]), int(w["r"]), float(m["n"])
-        if (b + r >= 10 and b / max(1, b + r) > 0.10) or n >= 5:
+        e = c.execute("""SELECT coalesce(sum(value),0) AS n FROM metrics WHERE project=%s AND name='http_error'
+                         AND at > now() - interval '3 minutes'""", (project,)).fetchone()
+        b, r, n, drops = int(w["b"]), int(w["r"]), float(m["n"]), float(e["n"])
+        dropping = drops >= 20 and drops > 0.5 * r      # dropped connections: roughly 8% of requests (a tender takes ~6)
+        if (b + r >= 10 and b / max(1, b + r) > 0.10) or n >= 5 or dropping:
             eff.update(threads=max(1, saved["threads"] // 2), delay_ms=max(saved["delay_ms"], 500), throttled=True,
-                       reason=f"{b} blocked and {int(n)} refusals in the last 3 minutes")
+                       reason=f"{b} blocked, {int(n)} refusals and {int(drops)} dropped connections in the last 3 minutes")
     return eff
 
 

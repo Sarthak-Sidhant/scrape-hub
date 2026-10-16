@@ -339,6 +339,20 @@ def test_auto_backoff_halves_threads_when_target_pushes_back(client, clean, logi
     assert eff["throttled"] is False and eff["threads"] == 8
 
 
+def test_auto_backoff_on_dropped_connections(client, clean, login):
+    h = hdr()
+    rid = start(client, project="dropper")
+    login.post("/api/projects/dropper/settings", json={"threads": 16, "delay_ms": 0, "auto_backoff": True})
+    recs = [{"record_id": str(i), "data": {}} for i in range(100)]
+    # a few dropped connections among many records is normal (B2: 48 in 9,600 tenders)
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": recs, "metrics": {"http_error": 25}}, headers=h)
+    assert client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]["throttled"] is False
+    # drops outnumbering half the records means the target is cutting us off
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [], "metrics": {"http_error": 60}}, headers=h)
+    eff = client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
+    assert eff["throttled"] is True and eff["threads"] == 8 and "dropped connections" in eff["reason"]
+
+
 def test_auto_backoff_on_block_ratio(client, clean, login):
     h = hdr()
     rid = start(client, project="blocky")
