@@ -13,6 +13,10 @@ from pydantic import BaseModel, Field
 from . import config, dash_auth, db, health
 from .auth import Caller, caller, client_ip
 
+def _iso(v):
+    return v.isoformat() if hasattr(v, "isoformat") else str(v)
+
+
 WEB = Path(__file__).resolve().parent.parent / "web"
 
 
@@ -292,7 +296,7 @@ def overview():
                FROM runs GROUP BY repository, auth_kind ORDER BY max(last_seen) DESC""").fetchall()
     worst = max((["healthy", "degraded", "unhealthy"].index(o["verdict"]) for o in out), default=0)
     return JSONResponse(json.loads(json.dumps(
-        {"verdict": ["healthy", "degraded", "unhealthy"][worst], "projects": out, "repos": repos}, default=str)))
+        {"verdict": ["healthy", "degraded", "unhealthy"][worst], "projects": out, "repos": repos}, default=_iso)))
 
 
 @app.get("/api/runs", dependencies=[Depends(need_login)])
@@ -307,7 +311,7 @@ def runs(state: str = "", limit: int = 100):
                FROM runs WHERE (%s = '' OR state = %s)
                ORDER BY (state='running') DESC, last_seen DESC LIMIT %s""",
             (config.STALL_AFTER_S, state, state, limit)).fetchall()
-    return JSONResponse(json.loads(json.dumps({"runs": rows}, default=str)))
+    return JSONResponse(json.loads(json.dumps({"runs": rows}, default=_iso)))
 
 
 @app.get("/api/throughput", dependencies=[Depends(need_login)])
@@ -319,7 +323,7 @@ def throughput(minutes: int = 60):
                       sum(errors)::int AS errors, sum(blocked)::int AS blocked, count(*)::int AS batches
                FROM batches WHERE at >= now() - make_interval(mins => %s)
                GROUP BY 1, 2 ORDER BY 1""", (minutes,)).fetchall()
-    return JSONResponse(json.loads(json.dumps({"points": rows}, default=str)))
+    return JSONResponse(json.loads(json.dumps({"points": rows}, default=_iso)))
 
 
 @app.get("/api/ips", dependencies=[Depends(need_login)])
@@ -330,7 +334,7 @@ def ips():
                       max(last_seen) AS last_seen, coalesce(sum(records),0)::bigint AS records
                FROM runs WHERE started_at >= now() - interval '7 days'
                GROUP BY runner_ip, egress_ip ORDER BY max(last_seen) DESC LIMIT 200""").fetchall()
-    return JSONResponse(json.loads(json.dumps({"ips": rows}, default=str)))
+    return JSONResponse(json.loads(json.dumps({"ips": rows}, default=_iso)))
 
 
 @app.get("/api/queues", dependencies=[Depends(need_login)])

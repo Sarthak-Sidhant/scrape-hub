@@ -1,0 +1,17 @@
+[Unit]
+Description=scrape-hub (ingest API + dashboard)
+After=network.target postgresql.service
+
+[Service]
+User=scrapehub
+WorkingDirectory=/opt/scrape-hub
+EnvironmentFile=/etc/scrape-hub/env
+ExecStart=/opt/scrape-hub/.venv/bin/uvicorn scrape_hub.app:app --host 127.0.0.1 --port 8787 --proxy-headers
+Restart=always
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
