@@ -9,6 +9,10 @@
         hub.complete([item["key"]], "done", fetched=n)
     hub.close()
 
+Speed is set from the dashboard and comes back on every call as `hub.settings`:
+{"threads": 4, "delay_ms": 0, "paused": False, "throttled": False, ...}. A scraper should size its concurrency from
+`hub.settings["threads"]`, sleep `delay_ms` between requests, and idle while `paused`.
+
 In a workflow, grant `permissions: id-token: write`; the client then mints a short-lived OIDC token for the
 hub's audience, which is how the hub knows the real repository. Outside Actions, set SCRAPE_HUB_TOKEN (the hub's
 legacy token) and SCRAPE_HUB_REPO.
@@ -26,8 +30,12 @@ HUB_URL = os.environ.get("SCRAPE_HUB_URL", "https://scrape.s1d.me").rstrip("/")
 AUDIENCE = os.environ.get("SCRAPE_HUB_AUDIENCE", HUB_URL)
 
 
+DEFAULT_SETTINGS = {"threads": 4, "delay_ms": 0, "paused": False, "auto_backoff": True, "throttled": False, "reason": ""}
+
+
 class _Auth:
     def __init__(self, hub_url=None):
+        self.settings = dict(DEFAULT_SETTINGS)
         self.hub = (hub_url or HUB_URL).rstrip("/")
         self.s = requests.Session()
         self._tok, self._tok_exp = None, 0
@@ -55,7 +63,10 @@ class _Auth:
                     headers["X-Scrape-Run-Id"] = os.environ.get("GITHUB_RUN_ID", "")
                 r = self.s.request(method, self.hub + path, json=body, headers=headers, timeout=30)
                 if r.status_code < 400:
-                    return r.json()
+                    out = r.json()
+                    if isinstance(out, dict) and isinstance(out.get("settings"), dict):
+                        self.settings = out["settings"]   # speed knobs set on the dashboard; read via hub.settings
+                    return out
                 if r.status_code in (401, 403, 404, 422):
                     raise RuntimeError(f"hub rejected {path}: {r.status_code} {r.text[:200]}")
                 last = RuntimeError(f"hub {path}: {r.status_code}")

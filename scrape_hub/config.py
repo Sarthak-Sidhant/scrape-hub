@@ -25,3 +25,6 @@ CLAIM_TIMEOUT_S = int(os.environ.get("CLAIM_TIMEOUT_S", "1800"))
 STALL_AFTER_S = int(os.environ.get("STALL_AFTER_S", "300"))
 # Raw batch rows older than this are deleted (run totals are kept).
 BATCH_RETENTION_DAYS = int(os.environ.get("BATCH_RETENTION_DAYS", "7"))
+
+# Ceiling for the per-runner thread setting, so a slider cannot ask a runner for more than it can usefully do.
+MAX_THREADS = int(os.environ.get("MAX_THREADS", "16"))

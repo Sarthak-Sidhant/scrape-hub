@@ -102,3 +102,6 @@ INSERT INTO run_ips (run_id, ip, source, first_seen, last_seen)
     SELECT id, runner_ip, 'api', started_at, last_seen FROM runs WHERE runner_ip <> '' ON CONFLICT DO NOTHING;
 INSERT INTO run_ips (run_id, ip, source, first_seen, last_seen)
     SELECT id, egress_ip, 'reported', started_at, last_seen FROM runs WHERE egress_ip <> '' ON CONFLICT DO NOTHING;
+
+-- Live knobs the dashboard sets and runners read back on every call: {threads, delay_ms, paused, auto_backoff}.
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}';

@@ -110,6 +110,37 @@ class QueueSeed(BaseModel):
     reset_failed: bool = False
 
 
+DEFAULT_SETTINGS = {"threads": 4, "delay_ms": 0, "paused": False, "auto_backoff": True}
+
+
+class SettingsIn(BaseModel):
+    threads: int = Field(default=4, ge=1, le=config.MAX_THREADS)
+    delay_ms: int = Field(default=0, ge=0, le=5000)
+    paused: bool = False
+    auto_backoff: bool = True
+
+
+def effective_settings(c, project: str) -> dict:
+    """What runners should actually do right now: the saved settings, backed off if the target is pushing back.
+
+    Backoff (when auto_backoff is on): in the last 3 minutes, if over 10% of work was blocked (with enough samples) or at least
+    5 HTTP 429/403/503 responses were counted, halve the threads (min 1) and enforce at least 500 ms between requests.
+    """
+    row = c.execute("SELECT settings FROM projects WHERE name=%s", (project,)).fetchone()
+    saved = {**DEFAULT_SETTINGS, **((row or {}).get("settings") or {})}
+    eff = {**saved, "throttled": False, "reason": ""}
+    if saved["auto_backoff"] and not saved["paused"]:
+        w = c.execute("""SELECT coalesce(sum(blocked),0) AS b, coalesce(sum(records),0) AS r FROM batches
+                         WHERE project=%s AND at > now() - interval '3 minutes'""", (project,)).fetchone()
+        m = c.execute("""SELECT coalesce(sum(value),0) AS n FROM metrics WHERE project=%s AND name IN ('http_429','http_403','http_503')
+                         AND at > now() - interval '3 minutes'""", (project,)).fetchone()
+        b, r, n = int(w["b"]), int(w["r"]), float(m["n"])
+        if (b + r >= 10 and b / max(1, b + r) > 0.10) or n >= 5:
+            eff.update(threads=max(1, saved["threads"] // 2), delay_ms=max(saved["delay_ms"], 500), throttled=True,
+                       reason=f"{b} blocked and {int(n)} refusals in the last 3 minutes")
+    return eff
+
+
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{1,63}$")
 
 
@@ -227,7 +258,8 @@ def post_batch(run_id: int, body: BatchIn, request: Request, who: Caller = Depen
                    note=COALESCE(%s, note) WHERE id=%s""",
             (n, body.errors, body.blocked, body.note, run_id),
         )
-    return {"stored": len(body.records)}
+        settings = effective_settings(c, run["project"])
+    return {"stored": len(body.records), "settings": settings}
 
 
 @app.post("/api/v1/runs/{run_id}/heartbeat")
@@ -240,7 +272,8 @@ def heartbeat(run_id: int, request: Request, body: BatchIn = BatchIn(), who: Cal
             "UPDATE runs SET last_seen=now(), errors=errors+%s, blocked=blocked+%s, note=COALESCE(%s, note) WHERE id=%s",
             (body.errors, body.blocked, body.note, run_id),
         )
-    return {"ok": True}
+        settings = effective_settings(c, run["project"])
+    return {"ok": True, "settings": settings}
 
 
 @app.post("/api/v1/runs/{run_id}/finish")
@@ -262,6 +295,10 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
         seen(c, run_id, request)
         if body.project != run["project"]:
             raise HTTPException(403, "a run can only claim from its own project")
+        settings = effective_settings(c, run["project"])
+        if settings["paused"]:
+            c.execute("UPDATE runs SET last_seen=now() WHERE id=%s", (run_id,))
+            return {"items": [], "settings": settings}
         rows = c.execute(
             """UPDATE queue SET status='claimed', claimed_by=%(run)s, claimed_at=now(), attempts=attempts+1
                WHERE (project, key) IN (
@@ -274,7 +311,7 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
              "timeout": config.CLAIM_TIMEOUT_S, "limit": body.limit},
         ).fetchall()
         c.execute("UPDATE runs SET last_seen=now() WHERE id=%s", (run_id,))
-    return {"items": [{"key": r["key"], "payload": r["payload"]} for r in rows]}
+    return {"items": [{"key": r["key"], "payload": r["payload"]} for r in rows], "settings": settings}
 
 
 @app.post("/api/v1/runs/{run_id}/complete")
@@ -422,10 +459,23 @@ def project_detail(name: str):
                       sum(value) AS hour
                FROM metrics WHERE project=%s AND at > now() - interval '1 hour' GROUP BY name ORDER BY name""", (name,)).fetchall()
         fresh = c.execute("SELECT max(scraped_at) AS newest, count(*) AS n FROM records WHERE project=%s", (name,)).fetchone()
+        effective = effective_settings(c, name)
         stats = project_stats(c, name)
         prog = progress(c, name, stats)
     return JSONResponse(json.loads(json.dumps({"project": meta, "failed": failed, "inflight": inflight, "metrics": mets,
-                                               "newest_record": fresh["newest"], "records": fresh["n"], **prog}, default=_iso)))
+                                               "newest_record": fresh["newest"], "records": fresh["n"],
+                                               "effective": effective, "settings": {**DEFAULT_SETTINGS, **(meta.get("settings") or {})},
+                                               "max_threads": config.MAX_THREADS, **prog}, default=_iso)))
+
+
+@app.post("/api/projects/{name}/settings", dependencies=[Depends(need_login)])
+def set_settings(name: str, body: SettingsIn):
+    """Runners pick this up on their next call (within about 30 seconds)."""
+    with db.conn() as c:
+        if not c.execute("SELECT 1 FROM projects WHERE name=%s", (name,)).fetchone():
+            raise HTTPException(404, "unknown project")
+        c.execute("UPDATE projects SET settings=%s::jsonb WHERE name=%s", (json.dumps(body.model_dump()), name))
+        return effective_settings(c, name)
 
 
 @app.post("/api/projects/{name}/retry-failed", dependencies=[Depends(need_login)])

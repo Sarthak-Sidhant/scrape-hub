@@ -43,7 +43,7 @@ def test_repo_comes_from_token_not_body(client, clean, login):
 def test_batch_updates_counters_and_records(client, clean):
     rid = start(client)
     body = {"records": [{"record_id": "a", "data": {"x": 1}}, {"record_id": "b", "data": {"x": 2}}], "errors": 1, "latency_ms": 40}
-    assert client.post(f"/api/v1/runs/{rid}/batches", json=body, headers=hdr()).json() == {"stored": 2}
+    assert client.post(f"/api/v1/runs/{rid}/batches", json=body, headers=hdr()).json()["stored"] == 2
     # same record id again is an upsert, not a duplicate
     client.post(f"/api/v1/runs/{rid}/batches", json={"records": [{"record_id": "a", "data": {"x": 9}}]}, headers=hdr())
     from scrape_hub import db
@@ -285,3 +285,63 @@ def test_runs_can_be_filtered_to_one_workflow_run(client, clean, login):
     start(client, project="filt", run_id="11")
     got = login.get("/api/runs?project=filt&gh_run_id=10").json()["runs"]
     assert len(got) == 1 and got[0]["gh_run_id"] == "10"
+
+
+# ---------------------------------------------------------------- live speed settings
+
+def test_default_settings_come_back_on_every_call(client, clean):
+    h = hdr()
+    rid = start(client, project="speedy")
+    hb = client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
+    assert hb == {"threads": 4, "delay_ms": 0, "paused": False, "auto_backoff": True, "throttled": False, "reason": ""}
+    assert client.post(f"/api/v1/runs/{rid}/batches", json={"records": []}, headers=h).json()["settings"]["threads"] == 4
+    assert client.post(f"/api/v1/runs/{rid}/claim", json={"project": "speedy"}, headers=h).json()["settings"]["threads"] == 4
+
+
+def test_dashboard_setting_reaches_runners_and_is_validated(client, clean, login):
+    rid = start(client, project="tunable")
+    ok = login.post("/api/projects/tunable/settings", json={"threads": 12, "delay_ms": 100, "paused": False, "auto_backoff": True})
+    assert ok.status_code == 200 and ok.json()["threads"] == 12
+    got = client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=hdr()).json()["settings"]
+    assert got["threads"] == 12 and got["delay_ms"] == 100
+    assert login.post("/api/projects/tunable/settings", json={"threads": 999}).status_code == 422   # above MAX_THREADS
+    assert login.post("/api/projects/tunable/settings", json={"threads": 0}).status_code == 422
+    assert login.post("/api/projects/nope/settings", json={"threads": 4}).status_code == 404
+    assert login.get("/api/projects/tunable").json()["effective"]["threads"] == 12
+
+
+def test_settings_require_login(client, clean):
+    client.cookies.clear()
+    assert client.post("/api/projects/anything/settings", json={"threads": 4}).status_code == 401
+
+
+def test_pause_stops_work_being_handed_out(client, clean, login):
+    h = hdr()
+    client.post("/api/v1/projects/pausable/queue", json={"items": [{"key": "a"}, {"key": "b"}]}, headers=h)
+    rid = start(client, project="pausable")
+    login.post("/api/projects/pausable/settings", json={"threads": 4, "paused": True})
+    r = client.post(f"/api/v1/runs/{rid}/claim", json={"project": "pausable", "limit": 5}, headers=h).json()
+    assert r["items"] == [] and r["settings"]["paused"] is True
+    login.post("/api/projects/pausable/settings", json={"threads": 4, "paused": False})
+    assert len(client.post(f"/api/v1/runs/{rid}/claim", json={"project": "pausable", "limit": 5}, headers=h).json()["items"]) == 2
+
+
+def test_auto_backoff_halves_threads_when_target_pushes_back(client, clean, login):
+    h = hdr()
+    rid = start(client, project="backoff")
+    login.post("/api/projects/backoff/settings", json={"threads": 8, "delay_ms": 0, "auto_backoff": True})
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [], "metrics": {"http_429": 6}}, headers=h)
+    eff = client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
+    assert eff["throttled"] is True and eff["threads"] == 4 and eff["delay_ms"] == 500 and "refusals" in eff["reason"]
+    # turning auto-backoff off honours the saved speed even under pushback
+    login.post("/api/projects/backoff/settings", json={"threads": 8, "delay_ms": 0, "auto_backoff": False})
+    eff = client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
+    assert eff["throttled"] is False and eff["threads"] == 8
+
+
+def test_auto_backoff_on_block_ratio(client, clean, login):
+    h = hdr()
+    rid = start(client, project="blocky")
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [{"record_id": str(i), "data": {}} for i in range(8)], "blocked": 4}, headers=h)
+    eff = client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
+    assert eff["throttled"] is True and eff["threads"] == 2

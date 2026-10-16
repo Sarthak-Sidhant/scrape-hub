@@ -42,6 +42,12 @@ button.act:hover{border-color:var(--accent)}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button[aria-pressed=true]{background:var(--panel2);color:var(--text);font-weight:700}
 .seg button:hover{color:var(--text)}
+.speed{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--panel2)}
+.speed .sr{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px}.speed .sl{font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:600}
+.speed .seg button.pause[aria-pressed=true]{background:var(--warn);color:#0b0f14}
+.speed label{font-size:12px;color:var(--dim);display:inline-flex;gap:6px;align-items:center;cursor:pointer}
+.speed .eff{margin-top:8px;font-size:12px;color:var(--dim)}.speed .eff b{color:var(--text)}
+.speed .thr{margin-top:6px;font-size:12px;color:var(--warn)}
 .chartwrap{position:relative;transition:opacity .15s}.chartwrap.stale{opacity:.45}svg{display:block;width:100%}
 svg text{font-family:inherit}
 .tip{position:absolute;pointer-events:none;z-index:4;min-width:150px;white-space:nowrap;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;box-shadow:0 4px 18px rgba(0,0,0,.22);font-size:12px}
@@ -141,6 +147,26 @@ function slicesFor(project,runs){
   t+=`<span class="tile ${st}" title="slice ${i+1} of ${latest.total_jobs}: ${st}${r?`, ${fmt(r.records)} records`:" (not started)"}">${i+1}</span>`}
  return `<div class="slices" role="img" aria-label="runner slices for the latest workflow run">${t}</div>`}
 
+const PRESETS=[["Slow",2,300],["Normal",4,0],["Fast",8,0],["Max",16,0]];
+window.__det={};
+function speedHtml(id,d){
+ const sv=d.settings||{},ef=d.effective||sv,pid=esc(id);
+ const btns=PRESETS.map(([n,t,dl])=>`<button data-speed="${t},${dl}" data-sp="${pid}" aria-pressed="${!sv.paused&&sv.threads===t&&sv.delay_ms===dl}" title="${t} threads per runner${dl?`, ${dl} ms between requests`:""}">${n} <small class="dim">${t}</small></button>`).join("");
+ const eff=sv.paused?`<b class="warn">Paused</b>: runners finish what they hold and take no new work.`:
+  `Runners are using <b>${ef.threads}</b> thread${ef.threads>1?"s":""} each${ef.delay_ms?` with <b>${ef.delay_ms} ms</b> between requests`:""}.`;
+ const thr=ef.throttled?`<div class="thr">Auto-throttled: ${esc(ef.reason||"the target is pushing back")}. Saved speed is ${sv.threads} threads; it returns when things calm down.</div>`:"";
+ return `<div class="speed"><div class="sr"><span class="sl">Speed</span><div class="seg" role="group" aria-label="runner speed">${btns}<button class="pause" data-pause="${pid}" aria-pressed="${!!sv.paused}">${sv.paused?"Resume":"Pause"}</button></div>
+  <label title="When more than 10% of work is blocked, or eprocure sends several 429/403/503 responses, halve the threads and add a delay until it calms down."><input type="checkbox" data-auto="${pid}" ${sv.auto_backoff?"checked":""}> auto-backoff</label></div>
+  <div class="eff">${eff} <span>Applies to every runner within about 30 seconds. Faster means more load on eprocure.</span></div>${thr}</div>`}
+async function saveSpeed(id,patch){
+ const sv=(window.__det[id]||{}).settings||{threads:4,delay_ms:0,paused:false,auto_backoff:true};
+ const body={threads:sv.threads,delay_ms:sv.delay_ms,paused:sv.paused,auto_backoff:sv.auto_backoff,...patch};
+ try{await fetch("/api/projects/"+encodeURIComponent(id)+"/settings",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)})}finally{tick()}}
+document.addEventListener("click",e=>{
+ const sp=e.target.closest("[data-speed]");if(sp){const [t,dl]=sp.dataset.speed.split(",").map(Number);saveSpeed(sp.dataset.sp,{threads:t,delay_ms:dl,paused:false});return}
+ const pz=e.target.closest("[data-pause]");if(pz){const id=pz.dataset.pause;saveSpeed(id,{paused:!((window.__det[id]||{}).settings||{}).paused})}});
+document.addEventListener("change",e=>{const a=e.target.closest("[data-auto]");if(a)saveSpeed(a.dataset.auto,{auto_backoff:a.checked})});
+
 const openSet=new Set();
 const dur2=sec=>{if(sec==null)return null;const m=Math.round(sec/60);return m<90?m+"m":m<2880?(m/60).toFixed(1)+"h":(m/1440).toFixed(1)+"d"};
 const tname=t=>t.payload&&(t.payload.org_name||t.payload.name)||t.key;
@@ -153,6 +179,7 @@ function metricChips(ms){
  return out.length?`<div class="metrics">${out.join("")}</div>`:""}
 
 function projectCard(p,runs,d){
+ if(d)window.__det[p.project]=d;
  const q=p.stats.queue||{},tot=Object.values(q).reduce((a,b)=>a+b,0),ul=p.unit_label,rl=p.record_label;
  const exp=p.expected_records,have=p.records_total,pct=exp?Math.min(100,have/exp*100):null;
  const eta=p.eta_s!=null?"ETA "+dur2(p.eta_s):(p.stats.running?"ETA unknown":"idle");
@@ -171,7 +198,7 @@ function projectCard(p,runs,d){
   const lr=(window.__past||[]).find(r=>r.project===id),last=lr?`<div class="lastrun">last run <span class="opill o-${lr.outcome}">${lr.outcome}</span> ${ago(lr.last_seen)} ago · ${fmt(lr.records)} ${esc(rl)}s · took ${dur(lr.duration_s)}</div>`:"";
   tail=metricChips(d.metrics||[])+fl+il+fresh+last}
  return `<section><div class="row"><h2 style="margin:0">${esc(p.title)}</h2><span class="pill ${p.verdict}">${p.verdict}</span></div>
- ${prog}${bar}${slicesFor(p.project,runs)}
+ ${prog}${bar}${slicesFor(p.project,runs)}${d?speedHtml(p.project,d):""}
  <ul class="rules">${p.rules.map(r=>`<li class="${r.level}"><span>${esc(r.message)}</span></li>`).join("")}</ul>${tail}</section>`}
 
 const RANGES={"15m":{min:15,bucket:1},"1h":{min:60,bucket:1},"6h":{min:360,bucket:5},"24h":{min:1440,bucket:15}};
