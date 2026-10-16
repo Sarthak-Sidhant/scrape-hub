@@ -61,3 +61,29 @@ CREATE TABLE IF NOT EXISTS records (
     scraped_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (project, record_id)
 );
+
+CREATE TABLE IF NOT EXISTS projects (
+    name             TEXT PRIMARY KEY,
+    title            TEXT NOT NULL DEFAULT '',
+    unit_label       TEXT NOT NULL DEFAULT 'item',    -- what one queue item is, e.g. 'organisation'
+    record_label     TEXT NOT NULL DEFAULT 'record',  -- what one stored row is, e.g. 'tender'
+    allowed_repos    TEXT[] NOT NULL DEFAULT '{}',    -- empty = unclaimed; the first repo to use it claims it
+    expected_units   INT NOT NULL DEFAULT 0,
+    expected_records BIGINT NOT NULL DEFAULT 0,
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO projects (name) SELECT project FROM runs UNION SELECT project FROM queue ON CONFLICT DO NOTHING;
+
+ALTER TABLE queue ADD COLUMN IF NOT EXISTS last_error TEXT NOT NULL DEFAULT '';
+ALTER TABLE queue ADD COLUMN IF NOT EXISTS fetched    INT  NOT NULL DEFAULT 0;
+
+-- Free-form counters a scraper reports (captcha_ok, http_429, ...). One row per upload per name.
+CREATE TABLE IF NOT EXISTS metrics (
+    id      BIGSERIAL PRIMARY KEY,
+    run_id  BIGINT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+    project TEXT NOT NULL,
+    at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    name    TEXT NOT NULL,
+    value   DOUBLE PRECISION NOT NULL
+);
+CREATE INDEX IF NOT EXISTS metrics_project_name_at ON metrics (project, name, at);

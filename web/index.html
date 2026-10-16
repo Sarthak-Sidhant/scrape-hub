@@ -28,6 +28,14 @@ h2{font-size:11px;margin:0 0 10px;color:var(--dim);letter-spacing:.1em;text-tran
 .slices{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
 .tile{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:11px;font-weight:700;color:#0b0f14;background:var(--bar)}
 .tile.running{background:var(--ok)}.tile.finished{background:var(--accent)}.tile.stalled{background:var(--bad)}.tile.failed{background:var(--bad)}.tile.none{color:var(--dim);border:1px dashed var(--line);background:transparent}
+.prog{display:flex;justify-content:space-between;gap:10px;margin-top:10px;flex-wrap:wrap}.prog b{font-size:15px}
+.bar.big{height:10px}.metrics{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.m{border:1px solid var(--line);border-radius:6px;padding:1px 8px;background:var(--panel2);font-size:12px}.m i{font-style:normal;color:var(--dim)}
+.tgt{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 10px;padding:6px 0;border-top:1px solid var(--line);font-size:12px}
+.tgt .err{grid-column:1/-1;color:var(--bad);word-break:break-word}
+button.act{font:inherit;font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--text);cursor:pointer}
+button.act:hover{border-color:var(--accent)}
+.sub{margin-top:10px}.sub summary{cursor:pointer;color:var(--dim);font-size:12px}
 .chartwrap{position:relative}svg{display:block;width:100%}
 .legend{display:flex;gap:16px;font-size:12px;color:var(--dim);margin-top:6px;flex-wrap:wrap}
 .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
@@ -94,13 +102,37 @@ function slicesFor(project,runs){
   t+=`<span class="tile ${st}" title="slice ${i}: ${st}${r?`, ${fmt(r.records)} records`:" (not started)"}">${i}</span>`}
  return `<div class="slices" role="img" aria-label="runner slices for the latest workflow run">${t}</div>`}
 
-function projectCard(p,runs){
- const q=p.stats.queue||{},tot=Object.values(q).reduce((a,b)=>a+b,0);
- const bar=tot?`<div class="bar" role="img" aria-label="queue progress">${["done","claimed","failed"].map(k=>`<i class="${k}" style="width:${(q[k]||0)/tot*100}%"></i>`).join("")}</div>
-  <div class="dim">${fmt(q.done||0)} done · ${fmt(q.claimed||0)} in flight · ${fmt(q.failed||0)} failed · ${fmt(q.pending||0)} pending</div>`:"";
- return `<section><div class="row"><h2 style="margin:0">${esc(p.project)}</h2><span class="pill ${p.verdict}">${p.verdict}</span></div>
- ${bar}${slicesFor(p.project,runs)}
- <ul class="rules">${p.rules.map(r=>`<li class="${r.level}"><span>${esc(r.message)}</span></li>`).join("")}</ul></section>`}
+const openSet=new Set();
+const dur2=sec=>{if(sec==null)return null;const m=Math.round(sec/60);return m<90?m+"m":m<2880?(m/60).toFixed(1)+"h":(m/1440).toFixed(1)+"d"};
+const tname=t=>t.payload&&(t.payload.org_name||t.payload.name)||t.key;
+function metricChips(ms){
+ const by={};ms.forEach(m=>by[m.name]=m);const used=new Set(),out=[];
+ ms.forEach(m=>{if(m.name.endsWith("_ok")){const base=m.name.slice(0,-3),f=by[base+"_fail"];
+   if(f){used.add(m.name);used.add(base+"_fail");const ok=m.hour,tot=ok+f.hour,r5=(m.last5||0),t5=r5+(f.last5||0);
+    out.push(`<span class="m" title="${fmt(ok)} ok / ${fmt(f.hour)} failed in the last hour">${esc(base)} <b class="${ok/tot<.5?"warn":"ok"}">${Math.round(ok/tot*100)}%</b> <i>ok${t5?` · ${Math.round(r5/t5*100)}% last 5m`:""}</i></span>`)}}});
+ ms.filter(m=>!used.has(m.name)).forEach(m=>out.push(`<span class="m">${esc(m.name)} <b>${fmt(m.hour)}</b> <i>1h</i></span>`));
+ return out.length?`<div class="metrics">${out.join("")}</div>`:""}
+
+function projectCard(p,runs,d){
+ const q=p.stats.queue||{},tot=Object.values(q).reduce((a,b)=>a+b,0),ul=p.unit_label,rl=p.record_label;
+ const exp=p.expected_records,have=p.records_total,pct=exp?Math.min(100,have/exp*100):null;
+ const eta=p.eta_s!=null?"ETA "+dur2(p.eta_s):(p.stats.running?"ETA unknown":"idle");
+ const bar=tot?`<div class="bar big" role="img" aria-label="${ul} progress">${["done","claimed","failed"].map(k=>`<i class="${k}" style="width:${(q[k]||0)/tot*100}%"></i>`).join("")}</div>
+  <div class="dim">${fmt(q.done||0)} ${ul}s done · ${fmt(q.claimed||0)} in flight · ${fmt(q.failed||0)} failed · ${fmt(q.pending||0)} waiting</div>`:"";
+ const prog=`<div class="prog"><span><b>${fmt(have)}</b>${exp?` of ~${fmt(exp)}`:""} ${esc(rl)}s${pct!=null?` <span class="dim">(${pct.toFixed(1)}%)</span>`:""}</span><span><b>${p.stats.rate_now.toFixed(0)}</b>/min · ${eta}</span></div>`;
+ let tail="";
+ if(d){
+  const id=p.project,failed=d.failed||[],infl=d.inflight||[];
+  const fl=failed.length?`<details class="sub" data-k="f-${id}" ${openSet.has("f-"+id)?"open":""}><summary class="bad">${failed.length} failed ${ul}${failed.length>1?"s":""}</summary>
+    <div style="margin:6px 0"><button class="act" data-retry="${esc(id)}">Retry all failed</button></div>
+    ${failed.map(t=>`<div class="tgt"><span>${esc(tname(t))} <span class="dim">· ${t.attempts} attempt${t.attempts==1?"":"s"}</span></span><span class="dim">expected ${fmt(t.payload.expected||0)}</span>${t.last_error?`<span class="err">${esc(t.last_error)}</span>`:""}</div>`).join("")}</details>`:"";
+  const il=infl.length?`<details class="sub" data-k="i-${id}" ${openSet.has("i-"+id)?"open":""}><summary>${infl.length} ${ul}${infl.length>1?"s":""} in flight</summary>
+    ${infl.map(t=>`<div class="tgt"><span>${esc(tname(t))}</span><span class="dim">slice ${t.job_index??"?"} · ${ago(t.claimed_at)}</span></div>`).join("")}</details>`:"";
+  const fresh=d.newest_record?`<div class="dim" style="margin-top:8px">newest ${esc(rl)} stored ${ago(d.newest_record)} ago</div>`:"";
+  tail=metricChips(d.metrics||[])+fl+il+fresh}
+ return `<section><div class="row"><h2 style="margin:0">${esc(p.title)}</h2><span class="pill ${p.verdict}">${p.verdict}</span></div>
+ ${prog}${bar}${slicesFor(p.project,runs)}
+ <ul class="rules">${p.rules.map(r=>`<li class="${r.level}"><span>${esc(r.message)}</span></li>`).join("")}</ul>${tail}</section>`}
 
 function chart(points){
  const el=$("chart");lastPoints=points;
@@ -135,7 +167,8 @@ async function tick(){
   const [ov,runs,tp,ips]=await Promise.all([j("/api/overview"),j("/api/runs?limit=200"),j("/api/throughput?minutes=60"),j("/api/ips")]);
   const v=$("verdict"),has=ov.projects.length;v.textContent=has?ov.verdict:"no data";v.className="pill "+(has?ov.verdict:"dim");
   kpis(ov);
-  $("projects").innerHTML=ov.projects.map(p=>projectCard(p,runs.runs)).join("")||'<section class="dim">No projects have reported yet.</section>';
+  const det={};await Promise.all(ov.projects.map(async p=>{try{det[p.project]=await j("/api/projects/"+encodeURIComponent(p.project))}catch(e){}}));
+  $("projects").innerHTML=ov.projects.map(p=>projectCard(p,runs.runs,det[p.project])).join("")||'<section class="dim">No projects have reported yet.</section>';
   chart(tp.points);runnerRows(runs.runs);
   $("repos").innerHTML=ov.repos.map(r=>`<div class="chip">${esc(r.repository)}<span class="tag" title="${r.auth_kind==="oidc"?"identity verified by GitHub":"self-reported by the caller"}">${r.auth_kind==="oidc"?"verified":"self-reported"}</span><br><small class="dim">${r.running} running · ${r.runs} runs · ${fmt(r.records)} records · ${ago(r.last_seen)} ago</small></div>`).join("")||'<span class="dim">none yet</span>';
   $("ips").innerHTML='<tr><th>seen by api</th><th>reported by runner</th><th class="n">runs</th><th class="n">records</th><th>last seen</th></tr>'+
@@ -143,6 +176,9 @@ async function tick(){
   $("dot").className="live";$("updated").textContent="live · "+new Date().toLocaleTimeString();
  }catch(e){if(e!==0){$("dot").className="live off";$("updated").textContent="update failed, retrying"}}
 }
+document.addEventListener("toggle",e=>{const k=e.target.dataset&&e.target.dataset.k;if(k){e.target.open?openSet.add(k):openSet.delete(k)}},true);
+document.addEventListener("click",async e=>{const b=e.target.closest("[data-retry]");if(!b)return;b.disabled=true;b.textContent="Retrying...";
+ try{await fetch("/api/projects/"+encodeURIComponent(b.dataset.retry)+"/retry-failed",{method:"POST"})}finally{tick()}});
 let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>chart(lastPoints),150)});
 tick();setInterval(tick,3000);
 </script></body></html>

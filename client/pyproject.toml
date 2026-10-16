@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "scrape-hub-client"
+version = "0.2.0"
+description = "Client for scrape-hub: report scraper runs, records and metrics, and claim work from the hub queue"
+requires-python = ">=3.9"
+dependencies = ["requests>=2.28"]
+
+[tool.setuptools]
+packages = ["scrape_hub_client"]

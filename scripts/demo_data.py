@@ -9,7 +9,10 @@ from scrape_hub import db
 random.seed(7)
 db.init_schema()
 with db.conn() as c:
-    c.execute("TRUNCATE batches, records, queue, runs RESTART IDENTITY CASCADE")
+    c.execute("TRUNCATE metrics, batches, records, queue, runs, projects RESTART IDENTITY CASCADE")
+    c.execute("INSERT INTO projects (name,title,unit_label,record_label,allowed_repos,expected_records) VALUES "
+              "('eprocure-fy2526','eProcure FY 2025-26 tenders','organisation','tender','{Sarthak-Sidhant/eprocure-scrape}',47973),"
+              "('cppp-aoc','CPPP award of contract','page','award','{Sarthak-Sidhant/results-tenders}',0)")
     repos = [("Sarthak-Sidhant/scrape-hub", "eprocure-fy2526", 8), ("Sarthak-Sidhant/results-tenders", "cppp-aoc", 6)]
     rid = 0
     for repo, project, n in repos:
@@ -34,7 +37,14 @@ with db.conn() as c:
                 tot += k
             c.execute("UPDATE runs SET records=%s, batches=40, errors=%s, blocked=%s WHERE id=%s", (tot, random.randint(0, 9), random.randint(0, 3), rid))
     for i in range(428):
-        c.execute("INSERT INTO queue (project,key,partition_id,status) VALUES ('eprocure-fy2526',%s,%s,%s)",
-                  (str(i), i, "done" if i < 130 else "claimed" if i < 138 else "failed" if i in (200, 201, 202) else "pending"))
+        st = "done" if i < 130 else "claimed" if i < 138 else "failed" if i in (200, 201, 202) else "pending"
+        err = {200: "portal listed 0 of 3592 expected tenders", 201: "12 of 80 tender pages failed", 202: "search failed (RuntimeError: Failed to authenticate after 10 attempts)"}.get(i, "")
+        c.execute("INSERT INTO queue (project,key,partition_id,status,payload,last_error,fetched,attempts,claimed_by,claimed_at) VALUES ('eprocure-fy2526',%s,%s,%s,%s::jsonb,%s,%s,1,%s,%s)",
+                  (str(i), i, st, json.dumps({"org_name": f"Example Organisation {i}", "expected": 120 + (i * 37) % 900}), err,
+                   (120 + (i * 37) % 900) if st == "done" else 0, (i % 8 + 1) if st == "claimed" else None, "2026-10-16 09:00:00+02" if st == "claimed" else None))
+    for m in range(1, 58):
+        for rid2 in range(1, 9):
+            for name, val in (("captcha_ok", random.randint(2, 6)), ("captcha_fail", random.randint(1, 4)), ("http_429", 1 if random.random() < .1 else 0)):
+                if val: c.execute("INSERT INTO metrics (run_id,project,at,name,value) VALUES (%s,'eprocure-fy2526',now()-make_interval(mins=>%s),%s,%s)", (rid2, m, name, val))
     c.execute("INSERT INTO records (project,record_id,data) SELECT 'eprocure-fy2526', g::text, '{}' FROM generate_series(1,5230) g")
 print("demo data ready")

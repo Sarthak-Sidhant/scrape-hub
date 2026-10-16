@@ -17,6 +17,9 @@ def evaluate(s: dict) -> dict:
     """
     rules = []
 
+    if s.get("failed_runs_1h"):
+        rules.append(("runs", "warn", f"{s['failed_runs_1h']} run(s) failed in the last hour"))
+
     if s["running"] == 0:
         rules.append(("activity", "ok", "idle: no runs in progress"))
     else:
@@ -57,10 +60,9 @@ def evaluate(s: dict) -> dict:
     if total:
         if q.get("failed", 0) and q["failed"] / total > 0.02:
             rules.append(("queue", "warn", f"{q['failed']} of {total} queue items failed"))
-        elif s["running"] == 0 and q.get("pending", 0) + q.get("claimed", 0) > 0 and q.get("done", 0) < total:
-            rules.append(("queue", "warn", f"{q.get('pending', 0) + q.get('claimed', 0)} items left but nothing running"))
         else:
-            rules.append(("queue", "ok", f"{q.get('done', 0)} of {total} done"))
+            left = q.get("pending", 0) + q.get("claimed", 0)
+            rules.append(("queue", "ok", f"{q.get('done', 0)} of {total} done" + (f", {left} waiting for the next run" if left and s["running"] == 0 else "")))
 
     worst = max((ORDER[r[1]] for r in rules), default=0)
     verdict = {0: "healthy", 1: "degraded", 2: "unhealthy"}[worst]

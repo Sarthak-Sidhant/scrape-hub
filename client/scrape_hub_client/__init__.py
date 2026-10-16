@@ -1,0 +1,170 @@
+"""Client for scrape-hub, used by scrapers running in GitHub Actions (or anywhere with a token).
+
+    from scrape_hub_client import HubClient
+    hub = HubClient("my-project", job_index=3, total_jobs=20)
+    for item in hub.claim(1):
+        ... scrape ...
+        hub.record(record_id, {...})
+        hub.metric("captcha_ok")           # any counter name; the dashboard charts them
+        hub.complete([item["key"]], "done", fetched=n)
+    hub.close()
+
+In a workflow, grant `permissions: id-token: write`; the client then mints a short-lived OIDC token for the
+hub's audience, which is how the hub knows the real repository. Outside Actions, set SCRAPE_HUB_TOKEN (the hub's
+legacy token) and SCRAPE_HUB_REPO.
+"""
+import os
+import threading
+import time
+from collections import Counter
+
+import requests
+
+__all__ = ["HubClient", "register_project", "seed_queue"]
+
+HUB_URL = os.environ.get("SCRAPE_HUB_URL", "https://scrape.s1d.me").rstrip("/")
+AUDIENCE = os.environ.get("SCRAPE_HUB_AUDIENCE", HUB_URL)
+
+
+class _Auth:
+    def __init__(self, hub_url=None):
+        self.hub = (hub_url or HUB_URL).rstrip("/")
+        self.s = requests.Session()
+        self._tok, self._tok_exp = None, 0
+
+    def token(self):
+        if os.environ.get("SCRAPE_HUB_TOKEN"):
+            return os.environ["SCRAPE_HUB_TOKEN"]
+        if time.time() < self._tok_exp - 60:
+            return self._tok
+        url, bearer = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL"), os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+        if not url:
+            raise RuntimeError("no OIDC available: add `permissions: id-token: write` or set SCRAPE_HUB_TOKEN")
+        r = requests.get(url, params={"audience": AUDIENCE}, headers={"Authorization": f"Bearer {bearer}"}, timeout=20)
+        r.raise_for_status()
+        self._tok, self._tok_exp = r.json()["value"], time.time() + 240  # GitHub tokens last ~5 min
+        return self._tok
+
+    def call(self, method, path, body=None, retries=4):
+        last = None
+        for i in range(retries):
+            try:
+                headers = {"Authorization": f"Bearer {self.token()}"}
+                if os.environ.get("SCRAPE_HUB_TOKEN"):
+                    headers["X-Scrape-Repo"] = os.environ.get("SCRAPE_HUB_REPO", os.environ.get("GITHUB_REPOSITORY", "unknown/unknown"))
+                    headers["X-Scrape-Run-Id"] = os.environ.get("GITHUB_RUN_ID", "")
+                r = self.s.request(method, self.hub + path, json=body, headers=headers, timeout=30)
+                if r.status_code < 400:
+                    return r.json()
+                if r.status_code in (401, 403, 404, 422):
+                    raise RuntimeError(f"hub rejected {path}: {r.status_code} {r.text[:200]}")
+                last = RuntimeError(f"hub {path}: {r.status_code}")
+            except requests.RequestException as e:
+                last = e
+            time.sleep(2 ** i)
+        raise last
+
+
+def register_project(name, title="", unit_label="item", record_label="record", expected_units=0, expected_records=0, hub_url=None):
+    """Create or update a project. The calling repo becomes its owner on first use."""
+    return _Auth(hub_url).call("PUT", f"/api/v1/projects/{name}", {
+        "title": title, "unit_label": unit_label, "record_label": record_label,
+        "expected_units": expected_units, "expected_records": expected_records})
+
+
+def seed_queue(project, items, reset_failed=False, hub_url=None, chunk=500):
+    """items: [{"key": str, "payload": {...}}]. Put the expected record count in payload["expected"] to get ETAs."""
+    a, added, reset = _Auth(hub_url), 0, 0
+    for i in range(0, max(len(items), 1), chunk):
+        r = a.call("POST", f"/api/v1/projects/{project}/queue", {"items": items[i:i + chunk], "reset_failed": reset_failed})
+        added, reset = added + r["added"], reset + r["reset"]
+    return {"added": added, "reset": reset}
+
+
+class HubClient(_Auth):
+    def __init__(self, project, job_index=0, total_jobs=1, hub_url=None, note=""):
+        super().__init__(hub_url)
+        self.project, self.job_index, self.total_jobs = project, job_index, total_jobs
+        self.lock = threading.Lock()
+        self.pending = []
+        self.errors = self.blocked = 0
+        self.metrics = Counter()
+        self.run_id = self.call("POST", "/api/v1/runs", {
+            "project": project, "job_index": job_index, "total_jobs": total_jobs,
+            "egress_ip": self._egress_ip(), "note": note})["run_id"]
+        self._stop = threading.Event()
+        threading.Thread(target=self._heartbeat_loop, daemon=True).start()
+
+    @staticmethod
+    def _egress_ip():
+        try:
+            return requests.get("https://api.ipify.org", timeout=8).text.strip()
+        except Exception:
+            return ""
+
+    # -- reporting ----------------------------------------------------------
+    def record(self, record_id, data):
+        with self.lock:
+            self.pending.append({"record_id": str(record_id), "data": data})
+            full = len(self.pending) >= 25
+        if full:
+            self.flush()
+
+    def error(self, n=1):
+        with self.lock:
+            self.errors += n
+
+    def block(self, n=1):
+        with self.lock:
+            self.blocked += n
+
+    def metric(self, name, value=1):
+        """Count anything: hub.metric("captcha_fail"). Names are a-z 0-9 - _ ; `x_ok` / `x_fail` pairs show a success rate."""
+        with self.lock:
+            self.metrics[name] += value
+
+    def flush(self, note=None):
+        with self.lock:
+            recs, err, blk, met = self.pending, self.errors, self.blocked, dict(self.metrics)
+            self.pending, self.errors, self.blocked, self.metrics = [], 0, 0, Counter()
+        if not (recs or err or blk or met or note):
+            return
+        t0 = time.time()
+        try:
+            self.call("POST", f"/api/v1/runs/{self.run_id}/batches",
+                      {"records": recs, "errors": err, "blocked": blk, "note": note, "metrics": met,
+                       "latency_ms": int((time.time() - t0) * 1000)})
+        except Exception:
+            with self.lock:  # keep the data for the next flush
+                self.pending = recs + self.pending
+                self.errors += err
+                self.blocked += blk
+                self.metrics.update(met)
+            raise
+
+    def _heartbeat_loop(self):
+        while not self._stop.wait(30):
+            try:
+                self.flush()
+                self.call("POST", f"/api/v1/runs/{self.run_id}/heartbeat", {})
+            except Exception as e:
+                print(f"[hub] heartbeat failed: {e}", flush=True)
+
+    # -- queue --------------------------------------------------------------
+    def claim(self, limit=1):
+        return self.call("POST", f"/api/v1/runs/{self.run_id}/claim", {"project": self.project, "limit": limit})["items"]
+
+    def complete(self, keys, status="done", error="", fetched=None):
+        self.flush()
+        self.call("POST", f"/api/v1/runs/{self.run_id}/complete",
+                  {"keys": list(keys), "status": status, "error": error, "fetched": fetched})
+
+    def note(self, text):
+        self.call("POST", f"/api/v1/runs/{self.run_id}/heartbeat", {"note": text[:200]})
+
+    def close(self, state="finished", note=""):
+        self._stop.set()
+        try:
+            self.flush()
+        finally:
+            self.call("POST", f"/api/v1/runs/{self.run_id}/finish", {"state": state, "note": note})

@@ -3,7 +3,7 @@ import pytest
 from conftest import hdr, make_oidc
 
 
-def start(client, project="p", job_index=0, total_jobs=1, **hk):
+def start(client, project="proj", job_index=0, total_jobs=1, **hk):
     r = client.post("/api/v1/runs", json={"project": project, "job_index": job_index, "total_jobs": total_jobs,
                                           "egress_ip": "20.1.2.3"}, headers=hdr(**hk))
     assert r.status_code == 200, r.text
@@ -11,13 +11,13 @@ def start(client, project="p", job_index=0, total_jobs=1, **hk):
 
 
 def test_requires_auth(client, clean):
-    assert client.post("/api/v1/runs", json={"project": "p"}).status_code == 401
-    assert client.post("/api/v1/runs", json={"project": "p"}, headers={"Authorization": "Bearer nope"}).status_code == 401
+    assert client.post("/api/v1/runs", json={"project": "proj"}).status_code == 401
+    assert client.post("/api/v1/runs", json={"project": "proj"}, headers={"Authorization": "Bearer nope"}).status_code == 401
 
 
 @pytest.mark.parametrize("kw", [{"aud": "https://evil.example"}, {"owner": "someone-else"}, {"exp": -10}])
 def test_rejects_bad_oidc(client, clean, kw):
-    r = client.post("/api/v1/runs", json={"project": "p"}, headers=hdr(**kw))
+    r = client.post("/api/v1/runs", json={"project": "proj"}, headers=hdr(**kw))
     assert r.status_code in (401, 403)
 
 
@@ -28,7 +28,7 @@ def test_rejects_token_signed_by_other_key(client, clean):
     good = make_oidc()
     claims = jwt.decode(good, options={"verify_signature": False})
     forged = jwt.encode(claims, other, algorithm="RS256")
-    assert client.post("/api/v1/runs", json={"project": "p"}, headers={"Authorization": f"Bearer {forged}"}).status_code == 401
+    assert client.post("/api/v1/runs", json={"project": "proj"}, headers={"Authorization": f"Bearer {forged}"}).status_code == 401
 
 
 def test_repo_comes_from_token_not_body(client, clean, login):
@@ -68,15 +68,15 @@ def test_queue_partitioning_claim_and_complete(client, clean):
     from scrape_hub import db
     with db.conn() as c:
         for i in range(10):
-            c.execute("INSERT INTO queue (project,key,partition_id,payload) VALUES ('p',%s,%s,%s::jsonb)", (f"k{i}", i, '{"n": %s}' % i))
+            c.execute("INSERT INTO queue (project,key,partition_id,payload) VALUES ('proj',%s,%s,%s::jsonb)", (f"k{i}", i, '{"n": %s}' % i))
     r0 = start(client, job_index=0, total_jobs=2)
     r1 = start(client, job_index=1, total_jobs=2)
-    a = client.post(f"/api/v1/runs/{r0}/claim", json={"project": "p", "limit": 100}, headers=hdr()).json()["items"]
-    b = client.post(f"/api/v1/runs/{r1}/claim", json={"project": "p", "limit": 100}, headers=hdr()).json()["items"]
+    a = client.post(f"/api/v1/runs/{r0}/claim", json={"project": "proj", "limit": 100}, headers=hdr()).json()["items"]
+    b = client.post(f"/api/v1/runs/{r1}/claim", json={"project": "proj", "limit": 100}, headers=hdr()).json()["items"]
     assert sorted(i["key"] for i in a) == ["k0", "k2", "k4", "k6", "k8"]
     assert sorted(i["key"] for i in b) == ["k1", "k3", "k5", "k7", "k9"]
     # nothing left to hand out while claimed
-    assert client.post(f"/api/v1/runs/{r0}/claim", json={"project": "p", "limit": 5}, headers=hdr()).json()["items"] == []
+    assert client.post(f"/api/v1/runs/{r0}/claim", json={"project": "proj", "limit": 5}, headers=hdr()).json()["items"] == []
     client.post(f"/api/v1/runs/{r0}/complete", json={"keys": ["k0", "k2"]}, headers=hdr())
     with db.conn() as c:
         st = {r["key"]: r["status"] for r in c.execute("SELECT key,status FROM queue").fetchall()}
@@ -86,17 +86,17 @@ def test_queue_partitioning_claim_and_complete(client, clean):
 def test_stale_claim_is_reclaimed(client, clean):
     from scrape_hub import db
     with db.conn() as c:
-        c.execute("INSERT INTO queue (project,key,partition_id) VALUES ('p','k',0)")
+        c.execute("INSERT INTO queue (project,key,partition_id) VALUES ('proj','k',0)")
     r = start(client)
-    assert len(client.post(f"/api/v1/runs/{r}/claim", json={"project": "p"}, headers=hdr()).json()["items"]) == 1
+    assert len(client.post(f"/api/v1/runs/{r}/claim", json={"project": "proj"}, headers=hdr()).json()["items"]) == 1
     with db.conn() as c:
         c.execute("UPDATE queue SET claimed_at = now() - interval '2 hours'")
     r2 = start(client, run_id="222")
-    assert len(client.post(f"/api/v1/runs/{r2}/claim", json={"project": "p"}, headers=hdr(run_id="222")).json()["items"]) == 1
+    assert len(client.post(f"/api/v1/runs/{r2}/claim", json={"project": "proj"}, headers=hdr(run_id="222")).json()["items"]) == 1
 
 
 def test_legacy_token_is_self_reported(client, clean, login):
-    r = client.post("/api/v1/runs", json={"project": "p"}, headers={"Authorization": "Bearer legacy-secret", "X-Scrape-Repo": "fake/repo"})
+    r = client.post("/api/v1/runs", json={"project": "proj"}, headers={"Authorization": "Bearer legacy-secret", "X-Scrape-Repo": "fake/repo"})
     assert r.status_code == 200
     run = login.get("/api/runs").json()["runs"][0]
     assert run["auth_kind"] == "token" and run["repository"] == "fake/repo"
@@ -142,3 +142,75 @@ def test_finish(client, clean, login):
     client.post(f"/api/v1/runs/{rid}/finish", json={"state": "finished", "note": "ok"}, headers=hdr())
     assert login.get("/api/runs").json()["runs"][0]["state"] == "finished"
     assert client.post(f"/api/v1/runs/{rid}/finish", json={"state": "bogus"}, headers=hdr()).status_code == 422
+
+
+# ---------------------------------------------------------------- registry, seeding, metrics, detail
+
+def test_first_repo_claims_project_and_others_are_refused(client, clean):
+    start(client, project="owned", repo="Sarthak-Sidhant/eprocure-scrape")
+    r = client.post("/api/v1/runs", json={"project": "owned"}, headers=hdr(repo="Sarthak-Sidhant/other-repo"))
+    assert r.status_code == 403
+    r = client.post("/api/v1/projects/owned/queue", json={"items": [{"key": "x"}]}, headers=hdr(repo="Sarthak-Sidhant/other-repo"))
+    assert r.status_code == 403
+
+
+def test_bad_project_name(client, clean):
+    r = client.post("/api/v1/runs", json={"project": "Bad Name!"}, headers=hdr())
+    assert r.status_code == 422
+
+
+def test_register_and_seed_queue(client, clean):
+    h = hdr()
+    assert client.put("/api/v1/projects/seeded", json={"title": "Seeded", "unit_label": "organisation", "record_label": "tender",
+                                                       "expected_records": 100}, headers=h).status_code == 200
+    items = [{"key": f"o{i}", "payload": {"expected": 10}} for i in range(5)]
+    assert client.post("/api/v1/projects/seeded/queue", json={"items": items}, headers=h).json() == {"added": 5, "reset": 0}
+    # seeding twice does not duplicate
+    assert client.post("/api/v1/projects/seeded/queue", json={"items": items}, headers=h).json()["added"] == 0
+
+
+def test_complete_records_error_and_fetched_and_retry(client, clean, login):
+    from scrape_hub import db
+    h = hdr()
+    client.post("/api/v1/projects/seeded/queue", json={"items": [{"key": "a", "payload": {"expected": 50, "org_name": "A"}},
+                                                                {"key": "b", "payload": {"expected": 30}}]}, headers=h)
+    rid = start(client, project="seeded")
+    got = client.post(f"/api/v1/runs/{rid}/claim", json={"project": "seeded", "limit": 5}, headers=h).json()["items"]
+    assert {i["key"] for i in got} == {"a", "b"}
+    client.post(f"/api/v1/runs/{rid}/complete", json={"keys": ["a"], "status": "done", "fetched": 48}, headers=h)
+    client.post(f"/api/v1/runs/{rid}/complete", json={"keys": ["b"], "status": "failed", "error": "listed 0 of 30"}, headers=h)
+    d = login.get("/api/projects/seeded").json()
+    assert d["failed"][0]["key"] == "b" and d["failed"][0]["last_error"] == "listed 0 of 30"
+    assert d["expected_records"] == 80
+    assert login.post("/api/projects/seeded/retry-failed").json() == {"reset": 1}
+    with db.conn() as c:
+        assert c.execute("SELECT status, last_error FROM queue WHERE key='b'").fetchone() == {"status": "pending", "last_error": ""}
+
+
+def test_claim_is_limited_to_runs_own_project(client, clean):
+    rid = start(client, project="mine")
+    r = client.post(f"/api/v1/runs/{rid}/claim", json={"project": "someone-else", "limit": 1}, headers=hdr())
+    assert r.status_code == 403
+
+
+def test_metrics_stored_and_shown(client, clean, login):
+    rid = start(client, project="metr")
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [], "metrics": {"captcha_ok": 6, "captcha_fail": 4}}, headers=hdr())
+    client.post(f"/api/v1/runs/{rid}/heartbeat", json={"metrics": {"captcha_ok": 2}}, headers=hdr())
+    m = {x["name"]: x for x in login.get("/api/projects/metr").json()["metrics"]}
+    assert m["captcha_ok"]["hour"] == 8 and m["captcha_fail"]["hour"] == 4
+
+
+def test_eta_from_recent_rate(client, clean, login):
+    h = hdr()
+    client.post("/api/v1/projects/etaproj/queue", json={"items": [{"key": "big", "payload": {"expected": 1000}}]}, headers=h)
+    rid = start(client, project="etaproj")
+    client.post(f"/api/v1/runs/{rid}/claim", json={"project": "etaproj"}, headers=h)
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [{"record_id": str(i), "data": {}} for i in range(100)]}, headers=h)
+    ov = {p["project"]: p for p in login.get("/api/overview").json()["projects"]}["etaproj"]
+    assert ov["remaining_expected"] == 1000 and ov["rate_10m"] == 10.0 and ov["eta_s"] == 6000
+
+
+def test_idle_with_work_left_is_healthy(client, clean, login):
+    client.post("/api/v1/projects/idleproj/queue", json={"items": [{"key": "a"}]}, headers=hdr())
+    assert login.get("/api/overview").json()["verdict"] == "healthy"

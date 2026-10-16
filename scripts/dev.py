@@ -20,9 +20,6 @@ salt = bytes(range(16))
 open(pwf, "w").write("scrypt$%s$%s\n" % (salt.hex(), hashlib.scrypt(b"dev-password-123", salt=salt, n=2 ** 14, r=8, p=1, dklen=32).hex()))
 os.environ.update(STATUS_PASSWORD_FILE=pwf, SCRAPE_LEGACY_TOKEN="dev-token")
 
-if len(sys.argv) > 1 and sys.argv[1] == "seed":
-    sys.argv = ["seed"] + sys.argv[2:]
-    exec(open(os.path.join(root, "scripts", "seed_fy2526.py")).read())
-else:
-    import uvicorn
-    uvicorn.run("scrape_hub.app:app", host="127.0.0.1", port=int(os.environ.get("PORT", "8787")))
+import uvicorn  # noqa: E402
+
+uvicorn.run("scrape_hub.app:app", host="127.0.0.1", port=int(os.environ.get("PORT", "8787")))

@@ -38,9 +38,13 @@ def test_error_and_block_rates():
     assert r["blocking"] == "bad"
 
 
-def test_queue_left_but_idle():
-    out = rules(queue={"pending": 5, "done": 5})
-    assert out["queue"] == "warn"
+def test_queue_left_but_idle_is_not_a_warning():
+    out = evaluate({**BASE, "queue": {"pending": 5, "done": 5}})
+    assert out["verdict"] == "healthy"
+
+
+def test_failed_runs_warn():
+    assert rules(failed_runs_1h=2)["runs"] == "warn"
 
 
 def test_queue_done_ok():
