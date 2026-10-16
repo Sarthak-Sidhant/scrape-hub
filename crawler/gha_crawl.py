@@ -19,6 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "reporter"))
 import requests  # noqa: E402
 from requests.adapters import HTTPAdapter  # noqa: E402
 
+import orgs as orgs_mod  # noqa: E402
 import scrape_organization as so  # noqa: E402
 from hubclient import HubClient  # noqa: E402
 
@@ -44,8 +45,28 @@ def list_tenders(org_id, out_dir, max_tenders, retries):
     return out[:max_tenders] if max_tenders else out
 
 
+_LIVE = {}
+
+
+def label_matches(org_id, name):
+    """The portal's ids shift when organisations are added; never crawl an id that now means something else."""
+    if not _LIVE:
+        _LIVE.update(orgs_mod.live_options())
+    return orgs_mod.norm(_LIVE.get(org_id, "")) == orgs_mod.norm(name)
+
+
 def crawl_org(hub, item, args, deadline):
     org_id, name = item["payload"]["org_id"], item["payload"]["org_name"]
+    try:
+        ok = label_matches(org_id, name)
+    except Exception as e:
+        hub.block()
+        hub.note(f"org {org_id}: could not read the portal's organisation list ({type(e).__name__})")
+        return "failed"
+    if not ok:
+        hub.block()
+        hub.note(f"org {org_id} {name[:40]}: portal id now points to {_LIVE.get(org_id, 'nothing')!r}; reseed needed")
+        return "failed"
     out_dir = tempfile.mkdtemp(prefix=f"org{org_id}_")
     expected = int(item["payload"].get("expected") or 0)
     tenders = []
