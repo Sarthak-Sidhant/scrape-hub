@@ -36,6 +36,7 @@ DEFAULT_SETTINGS = {"threads": 4, "delay_ms": 0, "paused": False, "auto_backoff"
 class _Auth:
     def __init__(self, hub_url=None):
         self.settings = dict(DEFAULT_SETTINGS)
+        self.queue = {}
         self.hub = (hub_url or HUB_URL).rstrip("/")
         self.s = requests.Session()
         self._tok, self._tok_exp = None, 0
@@ -166,8 +167,13 @@ class HubClient(_Auth):
                 print(f"[hub] heartbeat failed: {e}", flush=True)
 
     # -- queue --------------------------------------------------------------
-    def claim(self, limit=1):
-        return self.call("POST", f"/api/v1/runs/{self.run_id}/claim", {"project": self.project, "limit": limit})["items"]
+    def claim(self, limit=1, steal=False):
+        """Next queue items for this runner's slice. steal=True also takes work from other slices once this one is empty.
+        After the call, `hub.queue` is {"pending": n, "claimed": n} for the whole project, so a runner that gets nothing can
+        tell "all done" from "others are still working and may add more"."""
+        out = self.call("POST", f"/api/v1/runs/{self.run_id}/claim", {"project": self.project, "limit": limit, "steal": steal})
+        self.queue = out.get("queue", {})
+        return out["items"]
 
     def complete(self, keys, status="done", error="", fetched=None):
         self.flush()

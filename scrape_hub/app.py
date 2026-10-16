@@ -2,6 +2,7 @@ import json
 import re
 import threading
 import time
+import zlib
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
@@ -82,6 +83,7 @@ class Finish(BaseModel):
 class Claim(BaseModel):
     project: str
     limit: int = Field(default=1, ge=1, le=100)
+    steal: bool = False   # when this slice has nothing left, take pending work from any other slice
 
 
 class Complete(BaseModel):
@@ -176,7 +178,7 @@ def seed_queue(name: str, body: QueueSeed, who: Caller = Depends(caller)):
                 cur.execute(
                     """INSERT INTO queue (project, key, partition_id, payload) VALUES (%s,%s,%s,%s::jsonb)
                        ON CONFLICT (project, key) DO NOTHING""",
-                    (name, it.key, it.partition_id if it.partition_id is not None else i, json.dumps(it.payload)))
+                    (name, it.key, it.partition_id if it.partition_id is not None else zlib.crc32(it.key.encode()) % 1_000_000, json.dumps(it.payload)))
                 added += cur.rowcount
         reset = 0
         if body.reset_failed:
@@ -299,19 +301,24 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
         if settings["paused"]:
             c.execute("UPDATE runs SET last_seen=now() WHERE id=%s", (run_id,))
             return {"items": [], "settings": settings}
-        rows = c.execute(
-            """UPDATE queue SET status='claimed', claimed_by=%(run)s, claimed_at=now(), attempts=attempts+1
+        claim_sql = """UPDATE queue SET status='claimed', claimed_by=%(run)s, claimed_at=now(), attempts=attempts+1
                WHERE (project, key) IN (
                    SELECT project, key FROM queue
-                   WHERE project=%(project)s AND partition_id %% %(total)s = %(idx)s
+                   WHERE project=%(project)s {part}
                      AND (status='pending' OR (status='claimed' AND claimed_at < now() - make_interval(secs => %(timeout)s)))
                    ORDER BY partition_id, key LIMIT %(limit)s FOR UPDATE SKIP LOCKED)
-               RETURNING key, payload""",
-            {"run": run_id, "project": body.project, "total": max(1, run["total_jobs"]), "idx": run["job_index"],
-             "timeout": config.CLAIM_TIMEOUT_S, "limit": body.limit},
-        ).fetchall()
+               RETURNING key, payload"""
+        args = {"run": run_id, "project": body.project, "total": max(1, run["total_jobs"]), "idx": run["job_index"],
+                "timeout": config.CLAIM_TIMEOUT_S, "limit": body.limit}
+        rows = c.execute(claim_sql.format(part="AND partition_id %% %(total)s = %(idx)s"), args).fetchall()
+        if not rows and body.steal:
+            rows = c.execute(claim_sql.format(part=""), args).fetchall()
+        counts = {r["status"]: r["n"] for r in c.execute(
+            "SELECT status, count(*) AS n FROM queue WHERE project=%s AND status IN ('pending','claimed') GROUP BY status",
+            (body.project,)).fetchall()}
         c.execute("UPDATE runs SET last_seen=now() WHERE id=%s", (run_id,))
-    return {"items": [{"key": r["key"], "payload": r["payload"]} for r in rows], "settings": settings}
+    return {"items": [{"key": r["key"], "payload": r["payload"]} for r in rows], "settings": settings,
+            "queue": {"pending": counts.get("pending", 0), "claimed": counts.get("claimed", 0)}}
 
 
 @app.post("/api/v1/runs/{run_id}/complete")

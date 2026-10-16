@@ -345,3 +345,42 @@ def test_auto_backoff_on_block_ratio(client, clean, login):
     client.post(f"/api/v1/runs/{rid}/batches", json={"records": [{"record_id": str(i), "data": {}} for i in range(8)], "blocked": 4}, headers=h)
     eff = client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
     assert eff["throttled"] is True and eff["threads"] == 2
+
+
+# ---------------------------------------------------------------- work stealing, queue counts, hashed partitions
+
+def test_default_partition_is_a_stable_hash_so_added_items_spread_across_slices(client, clean):
+    import zlib
+    from scrape_hub import db
+    items = [{"key": f"org{i}:2024-01"} for i in range(40)]
+    client.post("/api/v1/projects/hashed/queue", json={"items": items}, headers=hdr())
+    with db.conn() as c:
+        parts = {r["key"]: r["partition_id"] for r in c.execute("SELECT key, partition_id FROM queue").fetchall()}
+    assert parts["org7:2024-01"] == zlib.crc32(b"org7:2024-01") % 1_000_000
+    assert len({p % 4 for p in parts.values()}) == 4          # not all stuck on slices 0..2
+
+
+def test_claim_without_steal_stays_in_its_slice_and_with_steal_takes_others(client, clean):
+    from scrape_hub import db
+    h = hdr()
+    client.post("/api/v1/projects/stealing/queue", json={"items": [{"key": "a", "partition_id": 1}, {"key": "b", "partition_id": 1}]}, headers=h)
+    r0 = start(client, project="stealing", job_index=0, total_jobs=2)
+    assert client.post(f"/api/v1/runs/{r0}/claim", json={"project": "stealing", "limit": 5}, headers=h).json()["items"] == []
+    got = client.post(f"/api/v1/runs/{r0}/claim", json={"project": "stealing", "limit": 5, "steal": True}, headers=h).json()
+    assert {i["key"] for i in got["items"]} == {"a", "b"}
+
+
+def test_claim_reports_queue_counts_so_runners_can_wait_for_more_work(client, clean):
+    h = hdr()
+    client.post("/api/v1/projects/counted/queue", json={"items": [{"key": "a", "partition_id": 0}, {"key": "b", "partition_id": 0}]}, headers=h)
+    rid = start(client, project="counted")
+    out = client.post(f"/api/v1/runs/{rid}/claim", json={"project": "counted", "limit": 1}, headers=h).json()
+    assert out["queue"] == {"pending": 1, "claimed": 1}
+
+
+def test_a_runner_can_add_items_to_another_project_its_repo_owns(client, clean):
+    h = hdr()
+    start(client, project="plan-a")
+    assert client.post("/api/v1/projects/crawl-b/queue", json={"items": [{"key": "x"}]}, headers=h).json()["added"] == 1
+    other = hdr(repo="Sarthak-Sidhant/someone-else")
+    assert client.post("/api/v1/projects/crawl-b/queue", json={"items": [{"key": "y"}]}, headers=other).status_code == 403
