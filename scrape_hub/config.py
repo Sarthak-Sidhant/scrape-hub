@@ -27,7 +27,7 @@ STALL_AFTER_S = int(os.environ.get("STALL_AFTER_S", "300"))
 BATCH_RETENTION_DAYS = int(os.environ.get("BATCH_RETENTION_DAYS", "7"))
 
 # Ceiling for the per-runner thread setting, so a slider cannot ask a runner for more than it can usefully do.
-MAX_THREADS = int(os.environ.get("MAX_THREADS", "16"))
+MAX_THREADS = int(os.environ.get("MAX_THREADS", "32"))
 
 # Object storage (Cloudflare R2, S3-compatible). Runners never see these keys: the hub hands out short-lived upload links.
 R2_ENDPOINT = os.environ.get("R2_ENDPOINT", "")

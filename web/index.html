@@ -149,7 +149,7 @@ function slicesFor(project,runs){
   t+=`<span class="tile ${st}" title="slice ${i+1} of ${latest.total_jobs}: ${st}${r?`, ${fmt(r.records)} records`:" (not started)"}">${i+1}</span>`}
  return `<div class="slices" role="img" aria-label="runner slices for the latest workflow run">${t}</div>`}
 
-const PRESETS=[["Slow",2,300],["Normal",4,0],["Fast",8,0],["Max",16,0]];
+const PRESETS=[["Slow",2,300],["Normal",4,0],["Fast",8,0],["Max",16,0],["Turbo",32,0]];
 window.__det={};
 function speedHtml(id,d){
  const sv=d.settings||{},ef=d.effective||sv,pid=esc(id);
