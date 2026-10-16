@@ -384,3 +384,18 @@ def test_a_runner_can_add_items_to_another_project_its_repo_owns(client, clean):
     assert client.post("/api/v1/projects/crawl-b/queue", json={"items": [{"key": "x"}]}, headers=h).json()["added"] == 1
     other = hdr(repo="Sarthak-Sidhant/someone-else")
     assert client.post("/api/v1/projects/crawl-b/queue", json={"items": [{"key": "y"}]}, headers=other).status_code == 403
+
+
+def test_bucketing_balances_load_and_orders_biggest_first():
+    import importlib.util, os
+    spec = importlib.util.spec_from_file_location("bucket_queue", os.path.join(os.path.dirname(__file__), "..", "scripts", "bucket_queue.py"))
+    bq = importlib.util.module_from_spec(spec); spec.loader.exec_module(bq)
+    weights = {f"k{i}": float(w) for i, w in enumerate([100, 90, 80, 70, 60, 50, 40, 30, 20, 10, 10, 10])}
+    assign, totals = bq.lpt(weights, 3)
+    assert max(totals) - min(totals) <= 10                                  # near-perfect balance
+    assert sum(totals) == sum(weights.values())
+    for b in range(3):
+        ranks = sorted((r, k) for k, (bb, r) in assign.items() if bb == b)
+        ws = [weights[k] for _, k in ranks]
+        assert ws == sorted(ws, reverse=True)                               # rank 0 is the biggest in its bucket
+    assert {b for b, _ in assign.values()} == {0, 1, 2}
