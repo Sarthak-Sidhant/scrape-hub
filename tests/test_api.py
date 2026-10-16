@@ -399,3 +399,41 @@ def test_bucketing_balances_load_and_orders_biggest_first():
         ws = [weights[k] for _, k in ranks]
         assert ws == sorted(ws, reverse=True)                               # rank 0 is the biggest in its bucket
     assert {b for b, _ in assign.values()} == {0, 1, 2}
+
+
+# ---------------------------------------------------------------- reading and replacing a pending queue
+
+def test_owner_can_list_pending_items_in_pages(client, clean):
+    h = hdr()
+    client.post("/api/v1/projects/lister/queue", json={"items": [{"key": f"k{i:02d}", "payload": {"n": i}} for i in range(7)]}, headers=h)
+    page1 = client.get("/api/v1/projects/lister/queue?limit=3", headers=h).json()
+    assert [i["key"] for i in page1["items"]] == ["k00", "k01", "k02"] and page1["next"] == "k02"
+    page2 = client.get("/api/v1/projects/lister/queue?limit=3&after=k02", headers=h).json()
+    assert [i["key"] for i in page2["items"]] == ["k03", "k04", "k05"]
+    last = client.get("/api/v1/projects/lister/queue?limit=3&after=k05", headers=h).json()
+    assert [i["key"] for i in last["items"]] == ["k06"] and last["next"] is None
+    assert client.get("/api/v1/projects/lister/queue", headers=hdr(repo="Sarthak-Sidhant/other")).status_code == 403
+
+
+def test_replace_swaps_pending_items_atomically(client, clean):
+    from scrape_hub import db
+    h = hdr()
+    client.post("/api/v1/projects/swapper/queue", json={"items": [{"key": "a", "payload": {"n": 1}}, {"key": "b", "payload": {"n": 2}}, {"key": "c"}]}, headers=h)
+    out = client.post("/api/v1/projects/swapper/queue/replace",
+                      json={"remove": ["a", "b"], "add": [{"key": "ab", "partition_id": 7, "payload": {"n": 3}}]}, headers=h).json()
+    assert out == {"removed": 2, "added": 1}
+    with db.conn() as c:
+        rows = {r["key"]: (r["partition_id"], r["payload"]) for r in c.execute("SELECT key, partition_id, payload FROM queue").fetchall()}
+    assert set(rows) == {"ab", "c"} and rows["ab"] == (7, {"n": 3})
+
+
+def test_replace_refuses_if_an_item_was_already_claimed_and_changes_nothing(client, clean):
+    from scrape_hub import db
+    h = hdr()
+    client.post("/api/v1/projects/guarded/queue", json={"items": [{"key": "a", "partition_id": 0}, {"key": "b", "partition_id": 1}]}, headers=h)
+    rid = start(client, project="guarded", job_index=0, total_jobs=2)
+    assert len(client.post(f"/api/v1/runs/{rid}/claim", json={"project": "guarded"}, headers=h).json()["items"]) == 1   # claims "a"
+    r = client.post("/api/v1/projects/guarded/queue/replace", json={"remove": ["a", "b"], "add": [{"key": "ab"}]}, headers=h)
+    assert r.status_code == 409
+    with db.conn() as c:
+        assert {x["key"] for x in c.execute("SELECT key FROM queue").fetchall()} == {"a", "b"}          # nothing was deleted or added

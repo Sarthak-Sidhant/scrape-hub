@@ -24,7 +24,7 @@ from collections import Counter
 
 import requests
 
-__all__ = ["HubClient", "register_project", "seed_queue"]
+__all__ = ["HubClient", "register_project", "seed_queue", "list_queue", "replace_queue"]
 
 HUB_URL = os.environ.get("SCRAPE_HUB_URL", "https://scrape.s1d.me").rstrip("/")
 AUDIENCE = os.environ.get("SCRAPE_HUB_AUDIENCE", HUB_URL)
@@ -91,6 +91,22 @@ def seed_queue(project, items, reset_failed=False, hub_url=None, chunk=500):
         r = a.call("POST", f"/api/v1/projects/{project}/queue", {"items": items[i:i + chunk], "reset_failed": reset_failed})
         added, reset = added + r["added"], reset + r["reset"]
     return {"added": added, "reset": reset}
+
+
+def list_queue(project, status="pending", hub_url=None, page=1000):
+    """All queue items with this status, as [{"key", "partition_id", "status", "payload"}]. Owner only."""
+    a, out, after = _Auth(hub_url), [], ""
+    while True:
+        r = a.call("GET", f"/api/v1/projects/{project}/queue?status={status}&limit={page}&after={requests.utils.quote(after)}")
+        out += r["items"]
+        if not r["next"]:
+            return out
+        after = r["next"]
+
+
+def replace_queue(project, remove, add, hub_url=None):
+    """Atomically swap pending items. Fails (nothing changes) if any key in `remove` is no longer pending."""
+    return _Auth(hub_url).call("POST", f"/api/v1/projects/{project}/queue/replace", {"remove": list(remove), "add": list(add)})
 
 
 class HubClient(_Auth):

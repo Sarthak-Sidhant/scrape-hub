@@ -107,6 +107,11 @@ class QueueItem(BaseModel):
     payload: dict = {}
 
 
+class QueueReplace(BaseModel):
+    remove: list[str] = []
+    add: list[QueueItem] = []
+
+
 class QueueSeed(BaseModel):
     items: list[QueueItem]
     reset_failed: bool = False
@@ -201,6 +206,39 @@ def seen(c, run_id: int, request: Request, egress_ip: str = ""):
     touch_ip(c, run_id, client_ip(request), "api")
     if egress_ip:
         touch_ip(c, run_id, egress_ip, "reported")
+
+
+@app.get("/api/v1/projects/{name}/queue")
+def list_queue(name: str, status: str = "pending", after: str = "", limit: int = 1000, who: Caller = Depends(caller)):
+    """Read a project's queue (keyset-paged by key) so its owner can restructure it."""
+    limit = min(max(limit, 1), 2000)
+    with db.conn() as c:
+        ensure_project(c, name, who)
+        rows = c.execute("""SELECT key, partition_id, status, payload FROM queue
+                            WHERE project=%s AND status=%s AND key > %s ORDER BY key LIMIT %s""", (name, status, after, limit)).fetchall()
+    return {"items": rows, "next": rows[-1]["key"] if len(rows) == limit else None}
+
+
+@app.post("/api/v1/projects/{name}/queue/replace")
+def replace_queue(name: str, body: QueueReplace, who: Caller = Depends(caller)):
+    """Atomically swap pending items: every key in `remove` must still be pending (otherwise nothing changes and 409 is
+    returned), then `add` is inserted. Lets an owner merge or re-bucket work that nobody has started."""
+    keys = list(dict.fromkeys(body.remove))
+    with db.conn() as c:
+        ensure_project(c, name, who)
+        if keys:
+            gone = c.execute("DELETE FROM queue WHERE project=%s AND key = ANY(%s) AND status='pending' RETURNING key", (name, keys)).fetchall()
+            if len(gone) != len(keys):
+                raise HTTPException(409, f"{len(keys) - len(gone)} of the items to remove are no longer pending; nothing was changed")
+        added = 0
+        with c.cursor() as cur:
+            for it in body.add:
+                cur.execute(
+                    """INSERT INTO queue (project, key, partition_id, payload) VALUES (%s,%s,%s,%s::jsonb)
+                       ON CONFLICT (project, key) DO NOTHING""",
+                    (name, it.key, it.partition_id if it.partition_id is not None else zlib.crc32(it.key.encode()) % 1_000_000, json.dumps(it.payload)))
+                added += cur.rowcount
+    return {"removed": len(keys), "added": added}
 
 
 def own_run(c, run_id: int, who: Caller):
