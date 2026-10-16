@@ -1,85 +1,148 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex"><title>Scrape hub</title><style>
-:root{--bg:#0b0f14;--panel:#111820;--line:#26323f;--text:#d5dde6;--dim:#7d8b99;--accent:#6cb6ff;--ok:#5fcf8a;--warn:#e8b44c;--bad:#ef6a6a;--bar:#1a2430}
-@media (prefers-color-scheme:light){:root{--bg:#f3f5f8;--panel:#fff;--line:#d3dae2;--text:#1d2630;--dim:#66727f;--accent:#1f6fc0;--ok:#2a9d5c;--warn:#b7791f;--bad:#cf3f3f;--bar:#e6ebf1}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
-header{display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
-h1{font-size:14px;margin:0;letter-spacing:.06em}a{color:var(--accent)}header .sp{flex:1}
-.pill{padding:2px 10px;border-radius:99px;border:1px solid currentColor;font-size:12px;font-weight:600}
-.healthy{color:var(--ok)}.degraded{color:var(--warn)}.unhealthy{color:var(--bad)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}.dim{color:var(--dim)}
-main{padding:16px;display:grid;gap:16px;max-width:1400px;margin:0 auto}
-section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;overflow:hidden}
-h2{font-size:12px;margin:0 0 10px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px}
-.row{display:flex;justify-content:space-between;gap:8px}.big{font-size:22px;font-weight:700}
-.rules{margin:8px 0 0;padding:0;list-style:none}.rules li{padding:1px 0}.rules li::before{content:"\25CF ";}
-.bar{height:8px;background:var(--bar);border-radius:4px;overflow:hidden;display:flex;margin:6px 0}
-.bar i{display:block;height:100%}.done{background:var(--ok)}.claimed{background:var(--accent)}.failed{background:var(--bad)}.pending{background:var(--line)}
-.scroll{overflow-x:auto}table{border-collapse:collapse;width:100%;white-space:nowrap}
-th,td{text-align:left;padding:5px 10px;border-bottom:1px solid var(--line)}th{color:var(--dim);font-weight:500}
-td.n,th.n{text-align:right}svg{width:100%;height:150px;display:block}
-.tag{font-size:11px;padding:0 6px;border-radius:4px;border:1px solid var(--line);color:var(--dim)}
-.legend{display:flex;gap:14px;font-size:12px;color:var(--dim);margin-top:6px;flex-wrap:wrap}
+:root{--bg:#0b0f14;--panel:#111820;--panel2:#16202b;--line:#26323f;--text:#d5dde6;--dim:#7d8b99;--accent:#6cb6ff;--ok:#5fcf8a;--warn:#e8b44c;--bad:#ef6a6a;--bar:#1e2a37}
+@media (prefers-color-scheme:light){:root{--bg:#f3f5f8;--panel:#fff;--panel2:#f6f8fb;--line:#d3dae2;--text:#1d2630;--dim:#66727f;--accent:#1f6fc0;--ok:#2a9d5c;--warn:#b7791f;--bad:#cf3f3f;--bar:#e6ebf1}}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+a{color:var(--accent)}.dim{color:var(--dim)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+header{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line)}
+h1{font-size:14px;margin:0;letter-spacing:.08em}header .sp{flex:1}
+.pill{padding:1px 10px;border-radius:99px;border:1px solid currentColor;font-size:12px;font-weight:600;white-space:nowrap}
+.healthy{color:var(--ok)}.degraded{color:var(--warn)}.unhealthy{color:var(--bad)}
+.live{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px;animation:pulse 2s infinite}
+.live.off{background:var(--bad);animation:none}@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.live{animation:none}}
+main{padding:16px;display:grid;gap:14px;max-width:1280px;margin:0 auto}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+h2{font-size:11px;margin:0 0 10px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;font-weight:600}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.kpi b{display:block;font-size:26px;line-height:1.15;font-weight:700}.kpi span{color:var(--dim);font-size:12px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.bar{height:8px;background:var(--bar);border-radius:4px;overflow:hidden;display:flex;margin:10px 0 4px}
+.bar i{display:block;height:100%}.done{background:var(--ok)}.claimed{background:var(--accent)}.failed{background:var(--bad)}.pending{background:transparent}
+.rules{margin:10px 0 0;padding:0;list-style:none}.rules li{display:flex;gap:8px;padding:1px 0}
+.rules li::before{content:"";flex:none;width:7px;height:7px;border-radius:50%;margin-top:7px;background:currentColor}
+.rules span{color:var(--text)}
+.slices{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.tile{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;font-size:11px;font-weight:700;color:#0b0f14;background:var(--bar)}
+.tile.running{background:var(--ok)}.tile.finished{background:var(--accent)}.tile.stalled{background:var(--bad)}.tile.failed{background:var(--bad)}.tile.none{color:var(--dim);border:1px dashed var(--line);background:transparent}
+.chartwrap{position:relative}svg{display:block;width:100%}
+.legend{display:flex;gap:16px;font-size:12px;color:var(--dim);margin-top:6px;flex-wrap:wrap}
 .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.rn{display:grid;grid-template-columns:78px minmax(0,1.1fr) 56px minmax(0,2fr) 84px 250px 52px;gap:4px 12px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line)}
+.rn:first-of-type{border-top:0}
+.rn .st{font-weight:600}.rn .what{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rn .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.rn .ip{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rn small{color:var(--dim)}
+.rnh{display:grid;grid-template-columns:78px minmax(0,1.1fr) 56px minmax(0,2fr) 84px 250px 52px;gap:12px;color:var(--dim);font-size:11px;padding-bottom:6px}
+.rnh .n{text-align:right}
+@media (max-width:860px){
+ header{gap:8px;padding:10px 12px}header h1{white-space:nowrap}#updated{display:none}
+ .kpis{grid-template-columns:repeat(2,1fr)}
+ .rnh{display:none}
+ .rn{grid-template-columns:auto 1fr auto;grid-template-areas:"st repo slice" "what what what" "recs ip seen";gap:2px 10px;padding:10px 0}
+ .rn>:nth-child(1){grid-area:st}.rn>:nth-child(2){grid-area:repo}.rn>:nth-child(3){grid-area:slice;text-align:right}
+ .rn>:nth-child(4){grid-area:what;white-space:normal}.rn>:nth-child(5){grid-area:recs;text-align:left}
+ .rn>:nth-child(6){grid-area:ip;color:var(--dim)}.rn>:nth-child(7){grid-area:seen;text-align:right}
+}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{border:1px solid var(--line);border-radius:8px;padding:5px 10px;background:var(--panel2)}
+.tag{font-size:11px;padding:0 6px;border-radius:4px;border:1px solid var(--line);color:var(--dim);margin-left:6px}
+details summary{cursor:pointer;color:var(--dim);font-size:11px;letter-spacing:.1em;text-transform:uppercase;font-weight:600}
+table{border-collapse:collapse;width:100%;margin-top:8px}th,td{text-align:left;padding:4px 8px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--dim);font-weight:500}
+td.n,th.n{text-align:right}.scroll{overflow-x:auto}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 </style></head><body>
 <header><h1>SCRAPE HUB</h1><span id="verdict" class="pill dim">loading</span><span class="sp"></span>
-<span class="dim" id="updated"></span><a href="/logout">sign out</a></header>
+<span class="dim"><span id="dot" class="live"></span><span id="updated">connecting</span></span><a href="/logout">sign out</a></header>
 <main>
+<div class="kpis" id="kpis"></div>
 <div class="cards" id="projects"></div>
-<section><h2>Throughput, last hour (records / minute)</h2><div id="chart"></div>
-<div class="legend"><span><b style="background:var(--ok)"></b>records</span><span><b style="background:var(--warn)"></b>errors</span><span><b style="background:var(--bad)"></b>blocked</span></div></section>
-<section><h2>Repositories</h2><div class="scroll"><table id="repos"></table></div></section>
-<section><h2>Runners</h2><div class="scroll"><table id="runs"></table></div></section>
-<section><h2>Runner IPs (7 days)</h2><div class="scroll"><table id="ips"></table></div></section>
+<section><h2>Records per minute, last hour</h2><div class="chartwrap" id="chart"></div>
+<div class="legend"><span><b style="background:var(--ok)"></b>records</span><span><b style="background:var(--warn)"></b>minute had errors</span><span><b style="background:var(--bad)"></b>minute had blocks</span></div></section>
+<section><h2>Runners</h2><div class="rnh"><span>state</span><span>repository</span><span class="n">slice</span><span>doing now</span><span class="n">records</span><span>ip (api / reported)</span><span class="n">seen</span></div><div id="runs"></div></section>
+<section><h2>Repositories</h2><div class="chips" id="repos"></div></section>
+<section><details><summary>Runner IP history, 7 days</summary><div class="scroll"><table id="ips"></table></div></details></section>
 </main>
 <script>
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const fmt=n=>Number(n).toLocaleString();
 const ago=t=>{if(!t)return"-";const s=Math.max(0,(Date.now()-new Date(t))/1000);
- return s<90?Math.round(s)+"s ago":s<5400?Math.round(s/60)+"m ago":s<172800?Math.round(s/3600)+"h ago":Math.round(s/86400)+"d ago"};
-const dur=s=>s<90?s+"s":s<5400?Math.round(s/60)+"m":(s/3600).toFixed(1)+"h";
-async function j(u){const r=await fetch(u);if(r.status===401){location="/login";throw 0}return r.json()}
+ return s<90?Math.round(s)+"s":s<5400?Math.round(s/60)+"m":s<172800?Math.round(s/3600)+"h":Math.round(s/86400)+"d"};
+async function j(u){const r=await fetch(u);if(r.status===401){location="/login";throw 0}if(!r.ok)throw new Error(u);return r.json()}
+let lastPoints=[];
 
-function projectCard(p){
+function kpis(ov){
+ const P=ov.projects,sum=f=>P.reduce((a,p)=>a+f(p),0);
+ const rate=sum(p=>p.stats.rate_now),run=sum(p=>p.stats.running),stalled=sum(p=>p.stats.stalled),rec=sum(p=>p.records_total);
+ let done=0,tot=0;P.forEach(p=>{const q=p.stats.queue||{};Object.values(q).forEach(n=>tot+=n);done+=q.done||0});
+ $("kpis").innerHTML=
+  `<div class="kpi"><b>${rate.toFixed(0)}</b><span>records / min</span></div>
+   <div class="kpi"><b>${run}</b><span>runners active${stalled?` · <span class="bad">${stalled} stalled</span>`:""}</span></div>
+   <div class="kpi"><b>${fmt(rec)}</b><span>records stored</span></div>
+   <div class="kpi"><b>${tot?Math.round(done/tot*100)+"%":"-"}</b><span>${tot?`${fmt(done)} of ${fmt(tot)} orgs done`:"no queue"}</span></div>`}
+
+function slicesFor(project,runs){
+ const mine=runs.filter(r=>r.project===project);if(!mine.length)return"";
+ const latest=mine[0],g=mine.filter(r=>r.repository===latest.repository&&r.gh_run_id===latest.gh_run_id&&r.run_attempt===latest.run_attempt);
+ const by={};g.forEach(r=>by[r.job_index]=r);
+ let t="";for(let i=0;i<Math.min(latest.total_jobs,60);i++){const r=by[i],st=r?(r.stalled?"stalled":r.state):"none";
+  t+=`<span class="tile ${st}" title="slice ${i}: ${st}${r?`, ${fmt(r.records)} records`:" (not started)"}">${i}</span>`}
+ return `<div class="slices" role="img" aria-label="runner slices for the latest workflow run">${t}</div>`}
+
+function projectCard(p,runs){
  const q=p.stats.queue||{},tot=Object.values(q).reduce((a,b)=>a+b,0);
- const bar=tot?`<div class="bar" role="img" aria-label="queue progress">${["done","claimed","failed","pending"].map(k=>`<i class="${k}" style="width:${(q[k]||0)/tot*100}%"></i>`).join("")}</div>
+ const bar=tot?`<div class="bar" role="img" aria-label="queue progress">${["done","claimed","failed"].map(k=>`<i class="${k}" style="width:${(q[k]||0)/tot*100}%"></i>`).join("")}</div>
   <div class="dim">${fmt(q.done||0)} done · ${fmt(q.claimed||0)} in flight · ${fmt(q.failed||0)} failed · ${fmt(q.pending||0)} pending</div>`:"";
- return `<section><div class="row"><h2>${esc(p.project)}</h2><span class="pill ${p.verdict}">${p.verdict}</span></div>
- <div class="row"><div><div class="big">${p.stats.rate_now.toFixed(0)}</div><div class="dim">records / min</div></div>
- <div><div class="big">${p.stats.running}</div><div class="dim">running${p.stats.stalled?` · <span class="bad">${p.stats.stalled} stalled</span>`:""}</div></div>
- <div><div class="big">${fmt(p.records_total)}</div><div class="dim">records stored</div></div></div>${bar}
- <ul class="rules">${p.rules.map(r=>`<li class="${r.level}"><span style="color:var(--text)">${esc(r.message)}</span></li>`).join("")}</ul></section>`}
+ return `<section><div class="row"><h2 style="margin:0">${esc(p.project)}</h2><span class="pill ${p.verdict}">${p.verdict}</span></div>
+ ${bar}${slicesFor(p.project,runs)}
+ <ul class="rules">${p.rules.map(r=>`<li class="${r.level}"><span>${esc(r.message)}</span></li>`).join("")}</ul></section>`}
 
 function chart(points){
- if(!points.length){$("chart").innerHTML='<div class="dim">no uploads in this window</div>';return}
+ const el=$("chart");lastPoints=points;
+ const W=Math.max(280,el.clientWidth),H=190,L=44,B=24,T=8,R=6,pw=W-L-R,ph=H-T-B,N=60;
+ const now=Math.floor(Date.now()/60000)*60,mins=[];for(let i=N-1;i>=0;i--)mins.push(now-i*60);
  const by={};points.forEach(p=>{(by[p.t]??={r:0,e:0,b:0});by[p.t].r+=p.records;by[p.t].e+=p.errors;by[p.t].b+=p.blocked});
- const now=Math.floor(Date.now()/60000)*60,mins=[];for(let i=59;i>=0;i--)mins.push(now-i*60);
- const data=mins.map(m=>by[m]||{r:0,e:0,b:0});
- const max=Math.max(1,...data.map(d=>d.r)),W=600,H=130,bw=W/60;
- const bars=data.map((d,i)=>{const h=d.r/max*H;return `<rect x="${i*bw+1}" y="${H-h}" width="${bw-2}" height="${h}" fill="var(--ok)"><title>${new Date(mins[i]*1000).toLocaleTimeString()}: ${d.r} records, ${d.e} errors, ${d.b} blocked</title></rect>`+
-  (d.e?`<rect x="${i*bw+1}" y="${H+4}" width="${bw-2}" height="4" fill="var(--warn)"/>`:"")+(d.b?`<rect x="${i*bw+1}" y="${H+10}" width="${bw-2}" height="4" fill="var(--bad)"/>`:"")}).join("");
- $("chart").innerHTML=`<svg viewBox="0 0 ${W} ${H+16}" preserveAspectRatio="none" role="img" aria-label="records per minute">${bars}</svg><div class="dim">peak ${fmt(max)}/min</div>`}
+ const data=mins.map(m=>by[m]||{r:0,e:0,b:0}),peak=Math.max(5,...data.map(d=>d.r));
+ const nice=(()=>{const p=Math.pow(10,Math.floor(Math.log10(peak))),f=peak/p;return(f<=1?1:f<=2?2:f<=5?5:10)*p})();
+ const bw=pw/N,y=v=>T+ph-(v/nice)*ph;
+ let s=`<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="records per minute over the last hour">`;
+ [0,.5,1].forEach(f=>{const v=nice*f,yy=y(v);s+=`<line x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}" stroke="var(--line)" stroke-dasharray="${f?"3 4":"0"}"/><text x="${L-6}" y="${yy+4}" text-anchor="end" fill="var(--dim)" font-size="11">${fmt(Math.round(v))}</text>`});
+ data.forEach((d,i)=>{const x=L+i*bw,h=(d.r/nice)*ph;
+  s+=`<rect x="${x+1}" y="${T+ph-h}" width="${Math.max(1,bw-2)}" height="${h}" rx="1.5" fill="var(--ok)"><title>${new Date(mins[i]*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}: ${d.r} records, ${d.e} errors, ${d.b} blocked</title></rect>`;
+  if(d.b)s+=`<rect x="${x+1}" y="${T+ph+3}" width="${Math.max(1,bw-2)}" height="3" fill="var(--bad)"/>`;
+  else if(d.e)s+=`<rect x="${x+1}" y="${T+ph+3}" width="${Math.max(1,bw-2)}" height="3" fill="var(--warn)"/>`});
+ [[0,"-60m"],[15,"-45m"],[30,"-30m"],[45,"-15m"],[59,"now"]].forEach(([i,l])=>{s+=`<text x="${L+i*bw+(i===59?bw:0)}" y="${H-6}" text-anchor="${i===0?"start":i===59?"end":"middle"}" fill="var(--dim)" font-size="11">${l}</text>`});
+ el.innerHTML=s+"</svg>"+(points.length?"":'<div class="dim" style="margin-top:6px">No uploads in the last hour.</div>')}
 
-function table(el,head,rows){el.innerHTML=`<tr>${head.map(h=>`<th class="${h[1]||""}">${h[0]}</th>`).join("")}</tr>`+
- (rows.length?rows.join(""):`<tr><td class="dim" colspan="${head.length}">nothing yet</td></tr>`)}
+function runnerRows(runs){
+ if(!runs.length){$("runs").innerHTML='<div class="dim">No runners yet.</div>';return}
+ $("runs").innerHTML=runs.slice(0,60).map(r=>{
+  const st=r.stalled?"stalled":r.state,c=r.stalled||r.state==="failed"?"bad":r.state==="running"?"ok":"dim";
+  const repo=r.repository.split("/").pop();
+  const ip=esc(r.runner_ip)+(r.egress_ip&&r.egress_ip!==r.runner_ip?` / ${esc(r.egress_ip)}`:"");
+  return `<div class="rn"><span class="st ${c}">${st}</span><span title="${esc(r.repository)} · ${esc(r.workflow)} #${esc(r.gh_run_id)}">${esc(repo)}<small> · ${esc(r.project)}</small></span>
+  <span class="n">${r.job_index}/${r.total_jobs}</span><span class="what" title="${esc(r.note)}">${esc(r.note||"-")}</span>
+  <span class="n">${fmt(r.records)}${r.errors?` <small class="warn">${r.errors}e</small>`:""}${r.blocked?` <small class="bad">${r.blocked}b</small>`:""}</span>
+  <span class="ip" title="${ip}">${ip}</span><span class="n dim">${ago(r.last_seen)}</span></div>`}).join("")}
 
 async function tick(){
  try{
- const [ov,runs,tp,ips]=await Promise.all([j("/api/overview"),j("/api/runs?limit=200"),j("/api/throughput?minutes=60"),j("/api/ips")]);
- const v=$("verdict");v.textContent=ov.projects.length?ov.verdict:"no data";v.className="pill "+(ov.projects.length?ov.verdict:"dim");
- $("projects").innerHTML=ov.projects.map(projectCard).join("")||'<section class="dim">No projects have reported yet.</section>';
- chart(tp.points);
- table($("repos"),[["repository"],["auth"],["running","n"],["runs","n"],["records","n"],["last seen"]],
-  ov.repos.map(r=>`<tr><td>${esc(r.repository)}</td><td><span class="tag" title="${r.auth_kind==="oidc"?"identity verified by GitHub":"self-reported"}">${r.auth_kind==="oidc"?"verified":"self-reported"}</span></td><td class="n">${r.running}</td><td class="n">${r.runs}</td><td class="n">${fmt(r.records)}</td><td>${ago(r.last_seen)}</td></tr>`));
- table($("runs"),[["state"],["project"],["repository"],["slice","n"],["run"],["runner ip"],["records","n"],["errors","n"],["blocked","n"],["age","n"],["last seen"],["note"]],
-  runs.runs.map(r=>{const st=r.stalled?"stalled":r.state,c=r.stalled||r.state==="failed"?"bad":r.state==="running"?"ok":"dim";
-   return `<tr><td class="${c}">${st}</td><td>${esc(r.project)}</td><td>${esc(r.repository)}</td><td class="n">${r.job_index}/${r.total_jobs}</td><td>${esc(r.gh_run_id)}.${r.run_attempt}</td><td>${esc(r.runner_ip)}${r.egress_ip&&r.egress_ip!==r.runner_ip?` <span class="dim">(${esc(r.egress_ip)})</span>`:""}</td><td class="n">${fmt(r.records)}</td><td class="n">${r.errors}</td><td class="n">${r.blocked}</td><td class="n">${dur(r.age_s)}</td><td>${ago(r.last_seen)}</td><td class="dim">${esc(r.note)}</td></tr>`}));
- table($("ips"),[["seen by api"],["reported by runner"],["runs","n"],["repos","n"],["records","n"],["last seen"]],
-  ips.ips.map(r=>`<tr><td>${esc(r.runner_ip)}</td><td>${esc(r.egress_ip||"-")}</td><td class="n">${r.runs}</td><td class="n">${r.repos}</td><td class="n">${fmt(r.records)}</td><td>${ago(r.last_seen)}</td></tr>`));
- $("updated").textContent="updated "+new Date().toLocaleTimeString();
- }catch(e){if(e!==0)$("updated").textContent="update failed, retrying"}
+  const [ov,runs,tp,ips]=await Promise.all([j("/api/overview"),j("/api/runs?limit=200"),j("/api/throughput?minutes=60"),j("/api/ips")]);
+  const v=$("verdict"),has=ov.projects.length;v.textContent=has?ov.verdict:"no data";v.className="pill "+(has?ov.verdict:"dim");
+  kpis(ov);
+  $("projects").innerHTML=ov.projects.map(p=>projectCard(p,runs.runs)).join("")||'<section class="dim">No projects have reported yet.</section>';
+  chart(tp.points);runnerRows(runs.runs);
+  $("repos").innerHTML=ov.repos.map(r=>`<div class="chip">${esc(r.repository)}<span class="tag" title="${r.auth_kind==="oidc"?"identity verified by GitHub":"self-reported by the caller"}">${r.auth_kind==="oidc"?"verified":"self-reported"}</span><br><small class="dim">${r.running} running · ${r.runs} runs · ${fmt(r.records)} records · ${ago(r.last_seen)} ago</small></div>`).join("")||'<span class="dim">none yet</span>';
+  $("ips").innerHTML='<tr><th>seen by api</th><th>reported by runner</th><th class="n">runs</th><th class="n">records</th><th>last seen</th></tr>'+
+   ips.ips.map(r=>`<tr><td>${esc(r.runner_ip)}</td><td>${esc(r.egress_ip||"-")}</td><td class="n">${r.runs}</td><td class="n">${fmt(r.records)}</td><td>${ago(r.last_seen)} ago</td></tr>`).join("");
+  $("dot").className="live";$("updated").textContent="live · "+new Date().toLocaleTimeString();
+ }catch(e){if(e!==0){$("dot").className="live off";$("updated").textContent="update failed, retrying"}}
 }
-tick();setInterval(tick,4000);
+let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>chart(lastPoints),150)});
+tick();setInterval(tick,3000);
 </script></body></html>
