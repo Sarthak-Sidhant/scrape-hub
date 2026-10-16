@@ -415,8 +415,8 @@ def retry_failed(name: str):
 @app.get("/api/overview", dependencies=[Depends(need_login)])
 def overview():
     with db.conn() as c:
-        projects = [r["project"] for r in c.execute(
-            "SELECT project FROM runs UNION SELECT project FROM queue ORDER BY 1").fetchall()]
+        # Creation order, so a project keeps its chart colour when others appear or disappear.
+        projects = [r["name"] for r in c.execute("SELECT name FROM projects ORDER BY created_at, name").fetchall()]
         out = []
         for p in projects:
             s = project_stats(c, p)
@@ -451,15 +451,17 @@ def runs(state: str = "", limit: int = 100):
 
 
 @app.get("/api/throughput", dependencies=[Depends(need_login)])
-def throughput(minutes: int = 60):
+def throughput(minutes: int = 60, bucket: int = 1):
+    """Per-project sums per time bucket. `t` is the bucket start (epoch seconds); divide by `bucket` for per-minute rates."""
     minutes = min(max(minutes, 5), 1440)
+    bucket = min(max(bucket, 1), 60)
     with db.conn() as c:
         rows = c.execute(
-            """SELECT extract(epoch FROM date_trunc('minute', at))::bigint AS t, project, sum(records)::int AS records,
+            """SELECT (floor(extract(epoch FROM at) / %(b)s) * %(b)s)::bigint AS t, project, sum(records)::int AS records,
                       sum(errors)::int AS errors, sum(blocked)::int AS blocked, count(*)::int AS batches
-               FROM batches WHERE at >= now() - make_interval(mins => %s)
-               GROUP BY 1, 2 ORDER BY 1""", (minutes,)).fetchall()
-    return JSONResponse(json.loads(json.dumps({"points": rows}, default=_iso)))
+               FROM batches WHERE at >= now() - make_interval(mins => %(m)s)
+               GROUP BY 1, 2 ORDER BY 1""", {"b": bucket * 60, "m": minutes}).fetchall()
+    return JSONResponse(json.loads(json.dumps({"points": rows, "bucket": bucket}, default=_iso)))
 
 
 @app.get("/api/ips", dependencies=[Depends(need_login)])

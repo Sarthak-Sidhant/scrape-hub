@@ -214,3 +214,19 @@ def test_eta_from_recent_rate(client, clean, login):
 def test_idle_with_work_left_is_healthy(client, clean, login):
     client.post("/api/v1/projects/idleproj/queue", json={"items": [{"key": "a"}]}, headers=hdr())
     assert login.get("/api/overview").json()["verdict"] == "healthy"
+
+
+def test_throughput_buckets(client, clean, login):
+    rid = start(client, project="bucketed")
+    for _ in range(3):
+        client.post(f"/api/v1/runs/{rid}/batches", json={"records": [{"record_id": str(_), "data": {}}]}, headers=hdr())
+    pts = login.get("/api/throughput?minutes=60&bucket=5").json()
+    assert pts["bucket"] == 5 and all(p["t"] % 300 == 0 for p in pts["points"])
+    assert sum(p["records"] for p in pts["points"]) == 3
+
+
+def test_projects_listed_in_creation_order(client, clean, login):
+    start(client, project="zzz-first")
+    start(client, project="aaa-second", run_id="222")
+    names = [p["project"] for p in login.get("/api/overview").json()["projects"]]
+    assert names == ["zzz-first", "aaa-second"]

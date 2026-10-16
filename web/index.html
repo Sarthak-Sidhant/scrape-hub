@@ -1,7 +1,7 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex"><title>Scrape hub</title><style>
-:root{--bg:#0b0f14;--panel:#111820;--panel2:#16202b;--line:#26323f;--text:#d5dde6;--dim:#7d8b99;--accent:#6cb6ff;--ok:#5fcf8a;--warn:#e8b44c;--bad:#ef6a6a;--bar:#1e2a37}
-@media (prefers-color-scheme:light){:root{--bg:#f3f5f8;--panel:#fff;--panel2:#f6f8fb;--line:#d3dae2;--text:#1d2630;--dim:#66727f;--accent:#1f6fc0;--ok:#2a9d5c;--warn:#b7791f;--bad:#cf3f3f;--bar:#e6ebf1}}
+:root{--s1:#3987e5;--s2:#d95926;--s3:#199e70;--s4:#c98500;--s5:#d55181;--s6:#008300;--sx:#898781;--st-err:#ec835a;--st-blk:#d03b3b;--bg:#0b0f14;--panel:#111820;--panel2:#16202b;--line:#26323f;--text:#d5dde6;--dim:#7d8b99;--accent:#6cb6ff;--ok:#5fcf8a;--warn:#e8b44c;--bad:#ef6a6a;--bar:#1e2a37}
+@media (prefers-color-scheme:light){:root{--s1:#2a78d6;--s2:#eb6834;--s3:#1baf7a;--s4:#eda100;--s5:#e87ba4;--s6:#008300;--bg:#f3f5f8;--panel:#fff;--panel2:#f6f8fb;--line:#d3dae2;--text:#1d2630;--dim:#66727f;--accent:#1f6fc0;--ok:#2a9d5c;--warn:#b7791f;--bad:#cf3f3f;--bar:#e6ebf1}}
 *{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
 a{color:var(--accent)}.dim{color:var(--dim)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
@@ -36,7 +36,22 @@ h2{font-size:11px;margin:0 0 10px;color:var(--dim);letter-spacing:.1em;text-tran
 button.act{font:inherit;font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--text);cursor:pointer}
 button.act:hover{border-color:var(--accent)}
 .sub{margin-top:10px}.sub summary{cursor:pointer;color:var(--dim);font-size:12px}
-.chartwrap{position:relative}svg{display:block;width:100%}
+.chartbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 10px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{font:inherit;font-size:12px;padding:3px 11px;border:0;background:transparent;color:var(--dim);cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed=true]{background:var(--panel2);color:var(--text);font-weight:700}
+.seg button:hover{color:var(--text)}
+.chartwrap{position:relative;transition:opacity .15s}.chartwrap.stale{opacity:.45}svg{display:block;width:100%}
+svg text{font-family:inherit}
+.tip{position:absolute;pointer-events:none;z-index:4;min-width:150px;white-space:nowrap;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;box-shadow:0 4px 18px rgba(0,0,0,.22);font-size:12px}
+.tip .th{color:var(--dim);margin-bottom:4px}.tip .tr{display:flex;align-items:center;gap:8px;padding:1px 0}
+.tip .key{flex:none;width:12px;height:3px;border-radius:2px}.tip .tv{font-weight:700;font-size:13px;min-width:40px;text-align:right}.tip .tn{color:var(--dim)}
+.tip .sep{border-top:1px solid var(--line);margin:4px 0}
+.lg{display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:8px;font-size:12px}
+.lg span{display:inline-flex;align-items:center;gap:6px;color:var(--text)}.lg i{width:10px;height:10px;border-radius:2px;display:inline-block}.lg em{font-style:normal;color:var(--dim)}
+.tblwrap{max-height:300px;overflow:auto}.tblwrap table{margin-top:0}
+.tblwrap th{position:sticky;top:0;background:var(--panel)}
 .legend{display:flex;gap:16px;font-size:12px;color:var(--dim);margin-top:6px;flex-wrap:wrap}
 .legend b{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 .rn{display:grid;grid-template-columns:78px minmax(0,1.1fr) 56px minmax(0,2fr) 84px 250px 52px;gap:4px 12px;align-items:baseline;padding:8px 0;border-top:1px solid var(--line)}
@@ -69,8 +84,10 @@ td.n,th.n{text-align:right}.scroll{overflow-x:auto}
 <main>
 <div class="kpis" id="kpis"></div>
 <div class="cards" id="projects"></div>
-<section><h2>Records per minute, last hour</h2><div class="chartwrap" id="chart"></div>
-<div class="legend"><span><b style="background:var(--ok)"></b>records</span><span><b style="background:var(--warn)"></b>minute had errors</span><span><b style="background:var(--bad)"></b>minute had blocks</span></div></section>
+<section><h2>Records per minute</h2>
+<div class="chartbar"><div class="seg" id="ranges" role="group" aria-label="time range"></div>
+<div class="seg" id="views" role="group" aria-label="view"><button data-v="chart" aria-pressed="true">Chart</button><button data-v="table" aria-pressed="false">Table</button></div></div>
+<div class="chartwrap" id="chart"></div><div class="lg" id="legend"></div></section>
 <section><h2>Runners</h2><div class="rnh"><span>state</span><span>repository</span><span class="n">slice</span><span>doing now</span><span class="n">records</span><span>ip (api / reported)</span><span class="n">seen</span></div><div id="runs"></div></section>
 <section><h2>Repositories</h2><div class="chips" id="repos"></div></section>
 <section><details><summary>Runner IP history, 7 days</summary><div class="scroll"><table id="ips"></table></div></details></section>
@@ -82,7 +99,6 @@ const fmt=n=>Number(n).toLocaleString();
 const ago=t=>{if(!t)return"-";const s=Math.max(0,(Date.now()-new Date(t))/1000);
  return s<90?Math.round(s)+"s":s<5400?Math.round(s/60)+"m":s<172800?Math.round(s/3600)+"h":Math.round(s/86400)+"d"};
 async function j(u){const r=await fetch(u);if(r.status===401){location="/login";throw 0}if(!r.ok)throw new Error(u);return r.json()}
-let lastPoints=[];
 
 function kpis(ov){
  const P=ov.projects,sum=f=>P.reduce((a,p)=>a+f(p),0);
@@ -134,22 +150,115 @@ function projectCard(p,runs,d){
  ${prog}${bar}${slicesFor(p.project,runs)}
  <ul class="rules">${p.rules.map(r=>`<li class="${r.level}"><span>${esc(r.message)}</span></li>`).join("")}</ul>${tail}</section>`}
 
-function chart(points){
- const el=$("chart");lastPoints=points;
- const W=Math.max(280,el.clientWidth),H=190,L=44,B=24,T=8,R=6,pw=W-L-R,ph=H-T-B,N=60;
- const now=Math.floor(Date.now()/60000)*60,mins=[];for(let i=N-1;i>=0;i--)mins.push(now-i*60);
- const by={};points.forEach(p=>{(by[p.t]??={r:0,e:0,b:0});by[p.t].r+=p.records;by[p.t].e+=p.errors;by[p.t].b+=p.blocked});
- const data=mins.map(m=>by[m]||{r:0,e:0,b:0}),peak=Math.max(5,...data.map(d=>d.r));
- const nice=(()=>{const p=Math.pow(10,Math.floor(Math.log10(peak))),f=peak/p;return(f<=1?1:f<=2?2:f<=5?5:10)*p})();
- const bw=pw/N,y=v=>T+ph-(v/nice)*ph;
- let s=`<svg viewBox="0 0 ${W} ${H}" height="${H}" role="img" aria-label="records per minute over the last hour">`;
- [0,.5,1].forEach(f=>{const v=nice*f,yy=y(v);s+=`<line x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}" stroke="var(--line)" stroke-dasharray="${f?"3 4":"0"}"/><text x="${L-6}" y="${yy+4}" text-anchor="end" fill="var(--dim)" font-size="11">${fmt(Math.round(v))}</text>`});
- data.forEach((d,i)=>{const x=L+i*bw,h=(d.r/nice)*ph;
-  s+=`<rect x="${x+1}" y="${T+ph-h}" width="${Math.max(1,bw-2)}" height="${h}" rx="1.5" fill="var(--ok)"><title>${new Date(mins[i]*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}: ${d.r} records, ${d.e} errors, ${d.b} blocked</title></rect>`;
-  if(d.b)s+=`<rect x="${x+1}" y="${T+ph+3}" width="${Math.max(1,bw-2)}" height="3" fill="var(--bad)"/>`;
-  else if(d.e)s+=`<rect x="${x+1}" y="${T+ph+3}" width="${Math.max(1,bw-2)}" height="3" fill="var(--warn)"/>`});
- [[0,"-60m"],[15,"-45m"],[30,"-30m"],[45,"-15m"],[59,"now"]].forEach(([i,l])=>{s+=`<text x="${L+i*bw+(i===59?bw:0)}" y="${H-6}" text-anchor="${i===0?"start":i===59?"end":"middle"}" fill="var(--dim)" font-size="11">${l}</text>`});
- el.innerHTML=s+"</svg>"+(points.length?"":'<div class="dim" style="margin-top:6px">No uploads in the last hour.</div>')}
+const RANGES={"15m":{min:15,bucket:1},"1h":{min:60,bucket:1},"6h":{min:360,bucket:5},"24h":{min:1440,bucket:15}};
+let range="1h",cview="chart",chartCache=null,hoverI=null;
+const SERIES_VARS=["--s1","--s2","--s3","--s4","--s5","--s6"];
+const cssv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const compact=v=>v>=1e6?(v/1e6).toFixed(v%1e6?1:0)+"M":v>=1e3?(v/1e3).toFixed(v%1e3?1:0)+"K":String(Math.round(v*10)/10);
+const clock=t=>new Date(t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+
+function buildChart(points,bucket,projects){
+ const r=RANGES[range],b=bucket*60,end=Math.floor(Date.now()/1000/b)*b,n=Math.round(r.min/bucket);
+ // Colour follows the project (creation order), never its rank in this window; the tail past 6 folds into "other".
+ const names=projects.map(p=>p.project),series=names.slice(0,6).map((nm,i)=>({key:nm,label:projects[i].title||nm,color:SERIES_VARS[i]}));
+ if(names.length>6)series.push({key:"__other",label:"other",color:"--sx"});
+ const known=new Set(names.slice(0,6)),rows=[],idx={};
+ for(let i=0;i<n;i++){const row={t:end-(n-1-i)*b,by:{},err:0,blk:0,total:0};rows.push(row);idx[row.t]=row}
+ points.forEach(p=>{const row=idx[p.t];if(!row)return;const k=known.has(p.project)?p.project:"__other";
+  row.by[k]=(row.by[k]||0)+p.records/bucket;row.total+=p.records/bucket;row.err+=p.errors;row.blk+=p.blocked});
+ return {rows,series,bucket,any:points.length>0};
+}
+
+function roundedTop(x,y,w,h,r){r=Math.min(r,w/2,h);return `M${x},${y+h}V${y+r}Q${x},${y} ${x+r},${y}H${x+w-r}Q${x+w},${y} ${x+w},${y+r}V${y+h}Z`}
+
+function drawChart(){
+ const el=$("chart");if(!chartCache)return;
+ const {rows,series,bucket,any}=chartCache;
+ if(cview==="table"){drawTable(el,rows,series,bucket);return}
+ const W=Math.max(300,el.clientWidth),L=54,R=8,T=10,PH=180,SH=8,GAP=14,B=24,pw=W-L-R,n=rows.length;
+ const H=T+PH+GAP+SH+6+SH+B,slot=pw/n,bw=Math.min(24,Math.max(2,slot-2));
+ const peak=Math.max(5,...rows.map(r=>r.total)),nice=(()=>{const p=Math.pow(10,Math.floor(Math.log10(peak))),f=peak/p;return(f<=1?1:f<=2?2:f<=5?5:10)*p})();
+ const y=v=>T+PH-(v/nice)*PH,xc=i=>L+i*slot+slot/2;
+ let g=`<svg viewBox="0 0 ${W} ${H}" height="${H}" tabindex="0" role="img" aria-label="Records per minute by project, ${esc(range)}. Peak ${compact(peak)} per minute. Use the Table view for exact values." id="svg">`;
+ [0,.5,1].forEach(f=>{const v=nice*f,yy=Math.round(y(v))+.5;
+  g+=`<line x1="${L}" x2="${W-R}" y1="${yy}" y2="${yy}" stroke="${f?"var(--line)":"var(--dim)"}" stroke-opacity="${f?1:.5}"/><text x="${L-8}" y="${yy+4}" text-anchor="end" fill="var(--dim)" font-size="11">${compact(v)}</text>`});
+ rows.forEach((row,i)=>{
+  let cum=0,drawn=0;const x=xc(i)-bw/2,top=series.filter(s=>(row.by[s.key]||0)>0).pop();
+  series.forEach(s=>{const v=row.by[s.key]||0;if(v<=0)return;
+   const y0=y(cum),y1=y(cum+v),gapPx=drawn?2:0,h=Math.max(1,y0-y1-gapPx);cum+=v;drawn++;
+   const fill=`var(${s.color})`,common=`fill="${fill}"`;
+   g+=(s===top?`<path d="${roundedTop(x,y1,bw,h,4)}" ${common}/>`:`<rect x="${x}" y="${y1}" width="${bw}" height="${h}" ${common}/>`)});
+  const ys=T+PH+GAP;
+  if(row.err)g+=`<rect x="${x}" y="${ys}" width="${bw}" height="${SH}" rx="2" fill="var(--st-err)"/>`;
+  if(row.blk)g+=`<rect x="${x}" y="${ys+SH+6}" width="${bw}" height="${SH}" rx="2" fill="var(--st-blk)"/>`});
+ g+=`<text x="${L-8}" y="${T+PH+GAP+SH/2+3.5}" text-anchor="end" fill="var(--dim)" font-size="10">errors</text><text x="${L-8}" y="${T+PH+GAP+SH+6+SH/2+3.5}" text-anchor="end" fill="var(--dim)" font-size="10">blocked</text>`;
+ const ticks=Math.min(6,Math.max(2,Math.floor(pw/120)));
+ for(let k=0;k<ticks;k++){const i=Math.round(k*(n-1)/(ticks-1)),last=k===ticks-1;
+  g+=`<text x="${xc(i)}" y="${H-6}" text-anchor="${k===0?"start":last?"end":"middle"}" fill="var(--dim)" font-size="11">${last?"now":clock(rows[i].t)}</text>`}
+ if(!any)g+=`<text x="${L+pw/2}" y="${T+PH/2}" text-anchor="middle" fill="var(--dim)" font-size="12">No uploads in this range</text>`;
+ g+=`<line id="xh" x1="0" x2="0" y1="${T}" y2="${T+PH+GAP+SH*2+6}" stroke="var(--dim)" visibility="hidden"/>`;
+ g+=`<rect id="hit" x="${L}" y="${T}" width="${pw}" height="${H-T-B}" fill="transparent"/></svg><div class="tip" id="tip" hidden></div>`;
+ el.innerHTML=g;
+ const svg=$("svg"),hit=$("hit");
+ const pick=ev=>{const r=svg.getBoundingClientRect(),x=(ev.clientX-r.left)*(W/r.width)-L;setHover(Math.max(0,Math.min(n-1,Math.floor(x/slot))),xc,L,W)};
+ hit.addEventListener("pointermove",pick);hit.addEventListener("pointerdown",pick);
+ hit.addEventListener("pointerleave",()=>setHover(null));
+ svg.addEventListener("focus",()=>{if(hoverI==null)setHover(n-1,xc,L,W)});svg.addEventListener("blur",()=>setHover(null));
+ svg.addEventListener("keydown",ev=>{const d={ArrowLeft:-1,ArrowRight:1}[ev.key];if(ev.key==="Escape")return setHover(null);
+  if(d){ev.preventDefault();setHover(Math.max(0,Math.min(n-1,(hoverI??n-1)+d)),xc,L,W)}});
+ if(hoverI!=null)setHover(Math.min(hoverI,n-1),xc,L,W);
+}
+
+function setHover(i,xc,L,W){
+ hoverI=i;const xh=$("xh"),tip=$("tip");if(!xh||!tip||!chartCache)return;
+ if(i==null){xh.setAttribute("visibility","hidden");tip.hidden=true;return}
+ const {rows,series,bucket}=chartCache,row=rows[i],x=xc(i);
+ xh.setAttribute("x1",x);xh.setAttribute("x2",x);xh.setAttribute("visibility","visible");
+ tip.textContent="";
+ const add=(cls,txt)=>{const d=document.createElement("div");d.className=cls;if(txt!=null)d.textContent=txt;tip.appendChild(d);return d};
+ add("th",clock(row.t)+(bucket>1?" – "+clock(row.t+bucket*60):"")+" · records per minute");
+ series.forEach(s=>{const v=row.by[s.key]||0,r=add("tr");
+  const k=document.createElement("span");k.className="key";k.style.background=`var(${s.color})`;r.appendChild(k);
+  const val=document.createElement("span");val.className="tv";val.textContent=(Math.round(v*10)/10).toString();r.appendChild(val);
+  const nm=document.createElement("span");nm.className="tn";nm.textContent=s.label;r.appendChild(nm)});
+ if(series.length>1){add("sep");const r=add("tr"),k=document.createElement("span");k.className="key";k.style.background="transparent";r.appendChild(k);
+  const val=document.createElement("span");val.className="tv";val.textContent=(Math.round(row.total*10)/10).toString();r.appendChild(val);
+  const nm=document.createElement("span");nm.className="tn";nm.textContent="total";r.appendChild(nm)}
+ if(row.err||row.blk){add("sep");
+  [["errors",row.err,"--st-err"],["blocked",row.blk,"--st-blk"]].forEach(([l,v,c])=>{if(!v)return;const r=add("tr"),k=document.createElement("span");k.className="key";k.style.background=`var(${c})`;r.appendChild(k);
+   const val=document.createElement("span");val.className="tv";val.textContent=v;r.appendChild(val);const nm=document.createElement("span");nm.className="tn";nm.textContent=l;r.appendChild(nm)})}
+ tip.hidden=false;
+ const el=$("chart"),scale=el.clientWidth/W,px=x*scale,tw=tip.offsetWidth;
+ tip.style.left=Math.max(0,Math.min(el.clientWidth-tw,px+14>el.clientWidth-tw?px-tw-14:px+14))+"px";tip.style.top="6px";
+}
+
+function drawTable(el,rows,series,bucket){
+ const th=series.map(s=>`<th class="n">${esc(s.label)}/min</th>`).join("");
+ const body=rows.slice().reverse().map(r=>`<tr><td>${clock(r.t)}</td>${series.map(s=>`<td class="n">${Math.round((r.by[s.key]||0)*10)/10}</td>`).join("")}<td class="n">${r.err||""}</td><td class="n">${r.blk||""}</td></tr>`).join("");
+ el.innerHTML=`<div class="tblwrap"><table><tr><th>${bucket>1?bucket+"-min bucket from":"minute"}</th>${th}<th class="n">errors</th><th class="n">blocked</th></tr>${body}</table></div>`;
+}
+
+function drawLegend(ov){
+ const L=$("legend");if(!chartCache||cview!=="chart"){L.innerHTML="";return}
+ const {series}=chartCache;
+ if(series.length<2){L.innerHTML=series.length?`<span class="dim">${esc(series[0].label)}</span>`:"";return}
+ const now={};ov.projects.forEach(p=>now[p.project]=p.stats.rate_now);
+ L.innerHTML=series.map(s=>`<span><i style="background:var(${s.color})"></i>${esc(s.label)} <em>${s.key in now?now[s.key].toFixed(0)+"/min now":""}</em></span>`).join("")+
+  `<span><i style="background:var(--st-err);height:7px;width:12px"></i>minute had errors</span><span><i style="background:var(--st-blk);height:7px;width:12px"></i>minute had blocks</span>`;
+}
+
+function chart(points,bucket,ov){
+ chartCache=buildChart(points,bucket,ov.projects);$("chart").classList.remove("stale");
+ drawChart();drawLegend(ov);
+}
+function initChartControls(){
+ $("ranges").innerHTML=Object.keys(RANGES).map(k=>`<button data-r="${k}" aria-pressed="${k===range}">${k}</button>`).join("");
+ $("ranges").addEventListener("click",e=>{const b=e.target.closest("[data-r]");if(!b||b.dataset.r===range)return;range=b.dataset.r;
+  document.querySelectorAll("#ranges button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.r===range));$("chart").classList.add("stale");hoverI=null;tick()});
+ $("views").addEventListener("click",e=>{const b=e.target.closest("[data-v]");if(!b)return;cview=b.dataset.v;
+  document.querySelectorAll("#views button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===cview));drawChart();if(lastOv)drawLegend(lastOv)});
+}
+let lastOv=null;
 
 function runnerRows(runs){
  if(!runs.length){$("runs").innerHTML='<div class="dim">No runners yet.</div>';return}
@@ -164,12 +273,12 @@ function runnerRows(runs){
 
 async function tick(){
  try{
-  const [ov,runs,tp,ips]=await Promise.all([j("/api/overview"),j("/api/runs?limit=200"),j("/api/throughput?minutes=60"),j("/api/ips")]);
+  const [ov,runs,tp,ips]=await Promise.all([j("/api/overview"),j("/api/runs?limit=200"),j(`/api/throughput?minutes=${RANGES[range].min}&bucket=${RANGES[range].bucket}`),j("/api/ips")]);
   const v=$("verdict"),has=ov.projects.length;v.textContent=has?ov.verdict:"no data";v.className="pill "+(has?ov.verdict:"dim");
   kpis(ov);
   const det={};await Promise.all(ov.projects.map(async p=>{try{det[p.project]=await j("/api/projects/"+encodeURIComponent(p.project))}catch(e){}}));
   $("projects").innerHTML=ov.projects.map(p=>projectCard(p,runs.runs,det[p.project])).join("")||'<section class="dim">No projects have reported yet.</section>';
-  chart(tp.points);runnerRows(runs.runs);
+  lastOv=ov;chart(tp.points,tp.bucket||1,ov);runnerRows(runs.runs);
   $("repos").innerHTML=ov.repos.map(r=>`<div class="chip">${esc(r.repository)}<span class="tag" title="${r.auth_kind==="oidc"?"identity verified by GitHub":"self-reported by the caller"}">${r.auth_kind==="oidc"?"verified":"self-reported"}</span><br><small class="dim">${r.running} running · ${r.runs} runs · ${fmt(r.records)} records · ${ago(r.last_seen)} ago</small></div>`).join("")||'<span class="dim">none yet</span>';
   $("ips").innerHTML='<tr><th>seen by api</th><th>reported by runner</th><th class="n">runs</th><th class="n">records</th><th>last seen</th></tr>'+
    ips.ips.map(r=>`<tr><td>${esc(r.runner_ip)}</td><td>${esc(r.egress_ip||"-")}</td><td class="n">${r.runs}</td><td class="n">${fmt(r.records)}</td><td>${ago(r.last_seen)} ago</td></tr>`).join("");
@@ -179,6 +288,6 @@ async function tick(){
 document.addEventListener("toggle",e=>{const k=e.target.dataset&&e.target.dataset.k;if(k){e.target.open?openSet.add(k):openSet.delete(k)}},true);
 document.addEventListener("click",async e=>{const b=e.target.closest("[data-retry]");if(!b)return;b.disabled=true;b.textContent="Retrying...";
  try{await fetch("/api/projects/"+encodeURIComponent(b.dataset.retry)+"/retry-failed",{method:"POST"})}finally{tick()}});
-let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>chart(lastPoints),150)});
-tick();setInterval(tick,3000);
+let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{drawChart()},150)});
+initChartControls();tick();setInterval(tick,3000);
 </script></body></html>
