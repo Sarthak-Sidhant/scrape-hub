@@ -154,6 +154,19 @@ class SettingsIn(BaseModel):
     auto_backoff: bool = True
 
 
+PROBE_FAILS_TO_PAUSE = 3      # consecutive failed checks (one a minute) before runners are told to hold
+
+
+def target_down(c, target: str) -> str:
+    """'' while the target looks reachable; otherwise why runners should hold. Only the newest checks count, so a recovery
+    resumes the runners within a minute or two."""
+    rows = c.execute("SELECT ok, at FROM probes WHERE target=%s AND at > now() - interval '10 minutes' ORDER BY at DESC LIMIT %s",
+                     (target, PROBE_FAILS_TO_PAUSE)).fetchall()
+    if len(rows) >= PROBE_FAILS_TO_PAUSE and not any(r["ok"] for r in rows):
+        return f"{target} is not responding ({PROBE_FAILS_TO_PAUSE} checks in a row failed); runners are holding until it answers"
+    return ""
+
+
 def effective_settings(c, project: str) -> dict:
     """What runners should actually do right now: the saved settings, backed off if the target is pushing back.
 
@@ -163,6 +176,10 @@ def effective_settings(c, project: str) -> dict:
     row = c.execute("SELECT settings FROM projects WHERE name=%s", (project,)).fetchone()
     saved = {**DEFAULT_SETTINGS, **((row or {}).get("settings") or {})}
     eff = {**saved, "throttled": False, "reason": ""}
+    if saved.get("probe") and not saved["paused"]:
+        down = target_down(c, saved["probe"])
+        if down:
+            eff.update(paused=True, throttled=True, reason=down)
     if saved["auto_backoff"] and not saved["paused"]:
         w = c.execute("""SELECT coalesce(sum(blocked),0) AS b, coalesce(sum(records),0) AS r FROM batches
                          WHERE project=%s AND at > now() - interval '3 minutes'""", (project,)).fetchone()
@@ -609,7 +626,7 @@ def set_settings(name: str, body: SettingsIn):
     with db.conn() as c:
         if not c.execute("SELECT 1 FROM projects WHERE name=%s", (name,)).fetchone():
             raise HTTPException(404, "unknown project")
-        c.execute("UPDATE projects SET settings=%s::jsonb WHERE name=%s", (json.dumps(body.model_dump()), name))
+        c.execute("UPDATE projects SET settings = settings || %s::jsonb WHERE name=%s", (json.dumps(body.model_dump()), name))
         return effective_settings(c, name)
 
 
@@ -662,6 +679,25 @@ def retry_failed(name: str):
         n = c.execute("UPDATE queue SET status='pending', claimed_by=NULL, last_error='' WHERE project=%s AND status='failed'",
                       (name,)).rowcount
     return {"reset": n}
+
+
+@app.get("/api/probes", dependencies=[Depends(need_login)])
+def probes(minutes: int = 120):
+    """Latest reachability of each target plus a per-minute history for the last `minutes`."""
+    with db.conn() as c:
+        targets = [r["target"] for r in c.execute("SELECT DISTINCT target FROM probes WHERE at > now() - interval '1 day' ORDER BY 1").fetchall()]
+        out = []
+        for t in targets:
+            last = c.execute("SELECT ok, ms, detail, at FROM probes WHERE target=%s ORDER BY at DESC LIMIT 1", (t,)).fetchone()
+            since = c.execute("""SELECT min(at) AS at FROM probes WHERE target=%s AND ok = %s AND at > coalesce(
+                                    (SELECT max(at) FROM probes WHERE target=%s AND ok <> %s), '-infinity')""",
+                              (t, last["ok"], t, last["ok"])).fetchone()["at"]
+            hist = c.execute("""SELECT date_trunc('minute', at) AS at, bool_and(ok) AS ok, max(ms) AS ms FROM probes
+                                WHERE target=%s AND at > now() - make_interval(mins => %s) GROUP BY 1 ORDER BY 1""", (t, max(5, min(minutes, 1440)))).fetchall()
+            up = c.execute("SELECT round(100.0 * avg(ok::int), 1) AS p FROM probes WHERE target=%s AND at > now() - interval '24 hours'", (t,)).fetchone()["p"]
+            out.append({"target": t, "ok": last["ok"], "ms": last["ms"], "detail": last["detail"], "checked": last["at"], "since": since,
+                        "uptime_24h": float(up) if up is not None else None, "history": hist})
+    return JSONResponse(json.loads(json.dumps({"targets": out}, default=_iso)))
 
 
 @app.get("/api/overview", dependencies=[Depends(need_login)])

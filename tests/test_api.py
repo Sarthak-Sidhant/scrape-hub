@@ -1,5 +1,7 @@
 import pytest
 
+from scrape_hub import db
+
 from conftest import hdr, make_oidc
 
 
@@ -564,3 +566,30 @@ def test_known_records_is_per_project_and_needs_the_runs_own_repo(client, clean)
     assert client.post(f"/api/v1/runs/{other}/known-records", headers=hdr(repo=repo, run_id="9"), json={"ids": ["A"]}).json() == {"known": []}
     assert client.post(f"/api/v1/runs/{rid}/known-records", headers=hdr(repo=repo), json={"ids": ["A"]}).json() == {"known": ["A"]}
     assert client.post(f"/api/v1/runs/{rid}/known-records", headers=hdr(repo="Sarthak-Sidhant/other"), json={"ids": ["A"]}).status_code == 404
+
+
+def test_runners_hold_while_the_target_is_down_and_resume_when_it_answers(client, clean, login):
+    h = hdr()
+    rid = start(client, project="flaky")
+    login.post("/api/projects/flaky/settings", json={"threads": 8, "delay_ms": 0, "auto_backoff": True})
+    with db.conn() as c:
+        c.execute("UPDATE projects SET settings = settings || '{\"probe\": \"site\"}'::jsonb WHERE name='flaky'")
+    beat = lambda: client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
+
+    def probe(ok):
+        with db.conn() as c:
+            c.execute("INSERT INTO probes (target, ok, ms) VALUES ('site', %s, 5)", (ok,))
+    for _ in range(2):
+        probe(False)
+    assert beat()["paused"] is False                      # two failures is not yet an outage
+    probe(False)
+    eff = beat()
+    assert eff["paused"] is True and "not responding" in eff["reason"]
+    probe(True)
+    assert beat()["paused"] is False and beat()["threads"] == 8
+    # the slider keeps the probe setting
+    login.post("/api/projects/flaky/settings", json={"threads": 5, "delay_ms": 0, "auto_backoff": True})
+    probe(False); probe(False); probe(False)
+    assert beat()["paused"] is True
+    pr = login.get("/api/probes").json()["targets"][0]
+    assert pr["target"] == "site" and pr["ok"] is False and pr["since"]

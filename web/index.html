@@ -108,7 +108,7 @@ table{border-collapse:collapse;width:100%;margin-top:8px}th,td{text-align:left;p
 td.n,th.n{text-align:right}.scroll{overflow-x:auto}
 :focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 </style></head><body>
-<header><h1>SCRAPE HUB</h1><span id="verdict" class="pill dim">loading</span><span class="sp"></span>
+<header><h1>SCRAPE HUB</h1><span id="verdict" class="pill dim">loading</span><span id="probes"></span><span class="sp"></span>
 <span class="dim"><span id="dot" class="live"></span><span id="updated">connecting</span></span><a href="/logout">sign out</a></header>
 <main>
 <div class="kpis" id="kpis"></div>
@@ -400,6 +400,9 @@ async function tick(){
   const [ov,runs,tp,ips,past]=await Promise.all([j("/api/overview"),j("/api/runs?limit=200"),j(`/api/throughput?minutes=${RANGES[range].min}&bucket=${RANGES[range].bucket}`),j("/api/ips"),j(`/api/workflow-runs?state=past&limit=${histLimit}`)]);window.__past=past.runs;lastHist=past.runs;
   const v=$("verdict"),has=ov.projects.length;v.textContent=has?ov.verdict:"no data";v.className="pill "+(has?ov.verdict:"dim");
   kpis(ov);
+  try{const pr=await j("/api/probes");$("probes").innerHTML=pr.targets.map(t=>{const ago=t.since?Math.round((Date.now()-new Date(t.since))/60000):null,
+   tip=esc(`${t.target}: checked ${new Date(t.checked).toLocaleTimeString()}, ${t.uptime_24h??"?"}% up in 24 h${t.detail?", "+t.detail:""}`);
+   return `<span class="pill ${t.ok?"healthy":"unhealthy"}" style="margin-left:8px" title="${tip}">${esc(t.target)} ${t.ok?"up "+t.ms+" ms":"DOWN"+(ago!==null?" "+(ago<90?ago+" min":Math.round(ago/60)+" h"):"")}</span>`}).join("")}catch(e){}
   const det={};await Promise.all(ov.projects.map(async p=>{try{det[p.project]=await j("/api/projects/"+encodeURIComponent(p.project))}catch(e){}}));
   $("projects").innerHTML=ov.projects.map(p=>projectCard(p,runs.runs,det[p.project])).join("")||'<section class="dim">No projects have reported yet.</section>';
   lastOv=ov;chart(tp.points,tp.bucket||1,ov);runnerRows(runs.runs,past.runs[0]);histRows(past.runs);

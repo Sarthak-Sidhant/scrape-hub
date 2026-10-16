@@ -121,3 +121,13 @@ CREATE TABLE IF NOT EXISTS failures (
     PRIMARY KEY (project, kind, key)
 );
 CREATE INDEX IF NOT EXISTS failures_kind_seen ON failures (project, kind, last_seen);
+
+-- Is the thing we scrape reachable? One row per check, written by scripts/probe.py every minute from the hub host.
+CREATE TABLE IF NOT EXISTS probes (
+    target TEXT NOT NULL,
+    at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    ok     BOOLEAN NOT NULL,
+    ms     INT NOT NULL DEFAULT 0,
+    detail TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS probes_target_at ON probes (target, at);

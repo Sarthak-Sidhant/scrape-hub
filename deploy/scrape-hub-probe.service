@@ -1,0 +1,11 @@
+[Unit]
+Description=Check that the scraped sites are reachable
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=scrapehub
+WorkingDirectory=/opt/scrape-hub
+EnvironmentFile=/etc/scrape-hub/env
+ExecStart=/opt/scrape-hub/.venv/bin/python scripts/probe.py
+NoNewPrivileges=true
