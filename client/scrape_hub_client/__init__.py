@@ -176,7 +176,8 @@ class HubClient(_Auth):
         try:
             self.call("POST", f"/api/v1/runs/{self.run_id}/batches",
                       {"records": recs, "errors": err, "blocked": blk, "note": note, "metrics": met,
-                       "failures": fails, "clear": clr, "latency_ms": int((time.time() - t0) * 1000)})
+                       "failures": fails, "clear": clr, "latency_ms": getattr(self, "_last_ms", 0)})
+            self._last_ms = int((time.time() - t0) * 1000)   # reported with the next batch
         except Exception:
             with self.lock:  # keep the data for the next flush
                 self.pending = recs + self.pending
@@ -212,6 +213,13 @@ class HubClient(_Auth):
         self.flush()
         self.call("POST", f"/api/v1/runs/{self.run_id}/complete",
                   {"keys": list(keys), "status": status, "error": error, "fetched": fetched})
+
+    def known(self, ids, chunk=1000):
+        """The subset of these record ids the hub already stores (with parsed fields), for skipping work already done."""
+        out = []
+        for i in range(0, len(ids), chunk):
+            out += self.call("POST", f"/api/v1/runs/{self.run_id}/known-records", {"ids": list(ids[i:i + chunk])})["known"]
+        return out
 
     def upload_many(self, files, attempts=3):
         """Store files in the hub's object storage. files: [(path, bytes, content_type)]; path is relative to this project.

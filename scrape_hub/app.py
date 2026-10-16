@@ -130,6 +130,10 @@ class UploadRequest(BaseModel):
     files: list[UploadFile] = Field(min_length=1, max_length=60)
 
 
+class KnownReq(BaseModel):
+    ids: list[str] = Field(max_length=2000)
+
+
 class QueueReplace(BaseModel):
     remove: list[str] = []
     add: list[QueueItem] = []
@@ -262,6 +266,17 @@ def replace_queue(name: str, body: QueueReplace, who: Caller = Depends(caller)):
                     (name, it.key, it.partition_id if it.partition_id is not None else zlib.crc32(it.key.encode()) % 1_000_000, json.dumps(it.payload)))
                 added += cur.rowcount
     return {"removed": len(keys), "added": added}
+
+
+@app.post("/api/v1/runs/{run_id}/known-records")
+def known_records(run_id: int, body: KnownReq, request: Request, who: Caller = Depends(caller)):
+    """Which of these record ids are already stored with parsed fields, so a scraper resuming a window can skip them."""
+    with db.conn() as c:
+        run = own_run(c, run_id, who)
+        seen(c, run_id, request)
+        rows = c.execute("""SELECT record_id FROM records WHERE project=%s AND record_id = ANY(%s)
+                            AND data->'details'->'fields' IS NOT NULL""", (run["project"], body.ids)).fetchall()
+    return {"known": [r["record_id"] for r in rows]}
 
 
 PATH_RE = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
