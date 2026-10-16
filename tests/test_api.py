@@ -254,3 +254,34 @@ def test_runs_report_rate_and_sparkline(client, clean, login):
     client.post(f"/api/v1/runs/{rid}/batches", json={"records": [{"record_id": str(i), "data": {}} for i in range(10)]}, headers=hdr())
     run = login.get("/api/runs").json()["runs"][0]
     assert len(run["spark"]) == 15 and sum(run["spark"]) == 10 and run["rate_5m"] == 2.0
+
+
+def test_workflow_runs_group_slices_and_outcomes(client, clean, login):
+    # run 777: 3 slices, one failed -> partial once nothing is running
+    ids = [start(client, project="grouped", job_index=i, total_jobs=3, run_id="777") for i in range(3)]
+    for rid, st in zip(ids, ("finished", "finished", "failed")):
+        client.post(f"/api/v1/runs/{rid}/batches", json={"records": [{"record_id": f"r{rid}", "data": {}}], "errors": 1}, headers=hdr(run_id="777"))
+    ongoing = login.get("/api/workflow-runs?state=ongoing").json()["runs"]
+    assert len(ongoing) == 1 and ongoing[0]["outcome"] == "ongoing" and ongoing[0]["running"] == 3 and ongoing[0]["records"] == 3
+    for rid, st in zip(ids, ("finished", "finished", "failed")):
+        client.post(f"/api/v1/runs/{rid}/finish", json={"state": st}, headers=hdr(run_id="777"))
+    assert login.get("/api/workflow-runs?state=ongoing").json()["runs"] == []
+    past = login.get("/api/workflow-runs?state=past").json()["runs"][0]
+    assert past["outcome"] == "partial" and past["finished"] == 2 and past["failed"] == 1 and past["slices"] == 3
+    assert past["github_url"].endswith("/actions/runs/777") and past["duration_s"] >= 0 and past["errors"] == 3
+
+
+def test_workflow_run_outcomes_failed_and_completed(client, clean, login):
+    a = start(client, project="okproj", run_id="1")
+    client.post(f"/api/v1/runs/{a}/finish", json={"state": "finished"}, headers=hdr(run_id="1"))
+    b = start(client, project="badproj", run_id="2")
+    client.post(f"/api/v1/runs/{b}/finish", json={"state": "failed"}, headers=hdr(run_id="2"))
+    out = {r["project"]: r["outcome"] for r in login.get("/api/workflow-runs?state=past").json()["runs"]}
+    assert out == {"okproj": "completed", "badproj": "failed"}
+
+
+def test_runs_can_be_filtered_to_one_workflow_run(client, clean, login):
+    start(client, project="filt", run_id="10")
+    start(client, project="filt", run_id="11")
+    got = login.get("/api/runs?project=filt&gh_run_id=10").json()["runs"]
+    assert len(got) == 1 and got[0]["gh_run_id"] == "10"

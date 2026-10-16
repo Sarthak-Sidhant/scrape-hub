@@ -460,7 +460,7 @@ def overview():
 
 
 @app.get("/api/runs", dependencies=[Depends(need_login)])
-def runs(state: str = "", limit: int = 100):
+def runs(state: str = "", limit: int = 100, project: str = "", repository: str = "", gh_run_id: str = "", attempt: int = 0):
     limit = min(max(limit, 1), 500)
     with db.conn() as c:
         rows = c.execute(
@@ -468,9 +468,10 @@ def runs(state: str = "", limit: int = 100):
                       runner_ip, egress_ip, state, started_at, last_seen, finished_at, records, batches, errors, blocked, note,
                       (state='running' AND last_seen < now() - make_interval(secs => %s)) AS stalled,
                       extract(epoch FROM (coalesce(finished_at, now()) - started_at))::int AS age_s
-               FROM runs WHERE (%s = '' OR state = %s)
-               ORDER BY (state='running') DESC, last_seen DESC LIMIT %s""",
-            (config.STALL_AFTER_S, state, state, limit)).fetchall()
+               FROM runs WHERE (%s = '' OR state = %s) AND (%s = '' OR project = %s) AND (%s = '' OR repository = %s)
+                 AND (%s = '' OR gh_run_id = %s) AND (%s = 0 OR run_attempt = %s)
+               ORDER BY (state='running') DESC, last_seen DESC, job_index LIMIT %s""",
+            (config.STALL_AFTER_S, state, state, project, project, repository, repository, gh_run_id, gh_run_id, attempt, attempt, limit)).fetchall()
         ids = [r["id"] for r in rows]
         ips, spark = {}, {}
         if ids:
@@ -489,6 +490,47 @@ def runs(state: str = "", limit: int = 100):
             r["ip_count"] = len({i["ip"] for i in r["ips"] if i["source"] == "api"})
             r["spark"] = spark.get(r["id"], [0] * 15)
             r["rate_5m"] = sum(r["spark"][-5:]) / 5
+    return JSONResponse(json.loads(json.dumps({"runs": rows}, default=_iso)))
+
+
+@app.get("/api/workflow-runs", dependencies=[Depends(need_login)])
+def workflow_runs(state: str = "all", limit: int = 30, offset: int = 0):
+    """One row per workflow run (all of its runner slices together). state: ongoing | past | all."""
+    limit, offset = min(max(limit, 1), 200), max(offset, 0)
+    with db.conn() as c:
+        rows = c.execute(
+            """WITH g AS (
+                 SELECT project, repository, gh_run_id, run_attempt,
+                        max(workflow) AS workflow, max(actor) AS actor, max(total_jobs) AS total_jobs, count(*) AS slices,
+                        min(started_at) AS started_at, max(last_seen) AS last_seen,
+                        count(*) FILTER (WHERE state='running') AS running,
+                        count(*) FILTER (WHERE state='running' AND last_seen < now() - make_interval(secs => %(stall)s)) AS stalled,
+                        count(*) FILTER (WHERE state='finished') AS finished,
+                        count(*) FILTER (WHERE state='failed') AS failed,
+                        coalesce(sum(records),0)::bigint AS records, coalesce(sum(errors),0)::int AS errors, coalesce(sum(blocked),0)::int AS blocked,
+                        max(finished_at) FILTER (WHERE state <> 'running') AS ended_at,
+                        array_agg(id) AS run_ids
+                 FROM runs GROUP BY project, repository, gh_run_id, run_attempt)
+               SELECT g.*, (SELECT count(DISTINCT ip) FROM run_ips WHERE run_id = ANY(g.run_ids) AND source='api') AS ips,
+                      (SELECT count(*) FROM (SELECT run_id FROM run_ips WHERE run_id = ANY(g.run_ids) AND source='api'
+                                             GROUP BY run_id HAVING count(DISTINCT ip) > 1) x) AS ip_changed
+               FROM g WHERE (%(state)s = 'all' OR (%(state)s = 'ongoing' AND running > 0) OR (%(state)s = 'past' AND running = 0))
+               ORDER BY (running > 0) DESC, started_at DESC LIMIT %(limit)s OFFSET %(offset)s""",
+            {"stall": config.STALL_AFTER_S, "state": state, "limit": limit, "offset": offset}).fetchall()
+        now = c.execute("SELECT now() AS n").fetchone()["n"]
+    for r in rows:
+        r.pop("run_ids", None)
+        if r["running"]:
+            r["outcome"] = "stalled" if r["stalled"] == r["running"] else "ongoing"
+        elif r["finished"] == 0 and r["failed"] > 0:
+            r["outcome"] = "failed"
+        elif r["failed"] > 0 or r["slices"] < r["total_jobs"]:
+            r["outcome"] = "partial"
+        else:
+            r["outcome"] = "completed"
+        end = r["ended_at"] if not r["running"] and r["ended_at"] else now
+        r["duration_s"] = int((end - r["started_at"]).total_seconds())
+        r["github_url"] = f"https://github.com/{r['repository']}/actions/runs/{r['gh_run_id']}" if r["gh_run_id"].isdigit() else ""
     return JSONResponse(json.loads(json.dumps({"runs": rows}, default=_iso)))
 
 

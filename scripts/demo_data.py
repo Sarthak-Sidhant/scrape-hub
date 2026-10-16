@@ -42,6 +42,21 @@ with db.conn() as c:
     c.execute("UPDATE runs SET runner_ip='20.99.99.99' WHERE id=3")
     c.execute("INSERT INTO run_ips (run_id, ip, source, first_seen, last_seen, hits) VALUES (3,'20.99.99.99','api', now() - interval '12 minutes', now(), 20)")
     c.execute("UPDATE runs SET gh_run_id='9002' WHERE project='cppp-aoc'")
+    # past workflow runs: completed, partial (one slice failed), failed, and one that changed IP
+    def past(gh, project, repo, n, states, hours_ago, mins, recs):
+        for j in range(n):
+            st = states[j % len(states)]
+            c.execute("""INSERT INTO runs (project,repository,workflow,gh_run_id,job_index,total_jobs,auth_kind,runner_ip,egress_ip,state,started_at,
+                         last_seen,finished_at,records,batches,errors,blocked,note,actor)
+                         VALUES (%s,%s,'Crawl',%s,%s,%s,'oidc',%s,%s,%s, now() - make_interval(hours=>%s), now() - make_interval(hours=>%s, mins=>%s),
+                         now() - make_interval(hours=>%s, mins=>%s), %s, 30, %s, %s, '2 orgs','Sarthak-Sidhant')""",
+                      (project, repo, gh, j, n, f"20.7.{j}.{hours_ago}", f"20.7.{j}.{hours_ago}", st, hours_ago, hours_ago, -mins, hours_ago, -mins,
+                       0 if st == "failed" else recs, 1 if st == "failed" else 0, 0))
+    past("8001", "eprocure-fy2526", "Sarthak-Sidhant/eprocure-scrape", 6, ["finished"], 3, 5, 120)
+    past("8002", "eprocure-fy2526", "Sarthak-Sidhant/eprocure-scrape", 6, ["finished", "finished", "finished", "failed"], 7, 9, 90)
+    past("8003", "cppp-aoc", "Sarthak-Sidhant/results-tenders", 4, ["failed"], 20, 2, 0)
+    c.execute("INSERT INTO run_ips (run_id, ip, source) SELECT id, runner_ip, 'api' FROM runs WHERE gh_run_id IN ('8001','8002','8003') ON CONFLICT DO NOTHING")
+    c.execute("INSERT INTO run_ips (run_id, ip, source) SELECT id, '20.8.8.8', 'api' FROM runs WHERE gh_run_id='8002' AND job_index=1 ON CONFLICT DO NOTHING")
     for i in range(428):
         st = "done" if i < 130 else "claimed" if i < 138 else "failed" if i in (200, 201, 202) else "pending"
         err = {200: "portal listed 0 of 3592 expected tenders", 201: "12 of 80 tender pages failed", 202: "search failed (RuntimeError: Failed to authenticate after 10 attempts)"}.get(i, "")
