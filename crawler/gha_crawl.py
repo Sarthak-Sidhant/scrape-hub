@@ -47,12 +47,22 @@ def list_tenders(org_id, out_dir, max_tenders, retries):
 def crawl_org(hub, item, args, deadline):
     org_id, name = item["payload"]["org_id"], item["payload"]["org_name"]
     out_dir = tempfile.mkdtemp(prefix=f"org{org_id}_")
-    try:
-        tenders = list_tenders(org_id, out_dir, args.max_tenders, args.retries)
-    except Exception as e:
+    expected = int(item["payload"].get("expected") or 0)
+    tenders = []
+    for attempt in range(2):  # an empty result for a populated org can be a transient block; retry on a fresh session
+        try:
+            tenders = list_tenders(org_id, out_dir, args.max_tenders, args.retries)
+        except Exception as e:
+            hub.block()
+            hub.note(f"org {org_id}: search failed ({type(e).__name__})")
+            return "failed"
+        if tenders or not expected:
+            break
+    if not args.max_tenders and expected and len(tenders) < expected * 0.9:
         hub.block()
-        hub.note(f"org {org_id}: search failed ({type(e).__name__})")
-        return "failed"
+        hub.note(f"org {org_id} {name[:40]}: listed {len(tenders)} of {expected} expected")
+        if not tenders:
+            return "failed"  # nothing to fetch; do not mark done
     hub.note(f"org {org_id} {name[:60]}: {len(tenders)} tenders")
     state = {"failed": 0}
 
