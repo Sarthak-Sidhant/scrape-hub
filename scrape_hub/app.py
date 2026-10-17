@@ -684,9 +684,33 @@ def retry_failed(name: str):
     return {"reset": n}
 
 
+def find_outages(rows, gap_s=360, min_fails=3):
+    """rows: [(epoch_seconds, ok)] oldest first. An outage is 3 or more failed checks in a row; two outages less than 6 minutes
+    apart (one lucky pass in the middle of a bad stretch) are one outage. Returns [(start, end, still_going)]."""
+    out, run = [], []
+    for t, ok in rows:
+        if not ok:
+            run.append(t)
+            continue
+        if len(run) >= min_fails:
+            out.append([run[0], t, False])
+        run = []
+    if len(run) >= min_fails:
+        out.append([run[0], rows[-1][0] + 60, True])
+    merged = []
+    for st, en, going in out:
+        if merged and st - merged[-1][1] < gap_s:
+            merged[-1][1], merged[-1][2] = en, going
+        else:
+            merged.append([st, en, going])
+    return merged
+
+
 @app.get("/api/probes", dependencies=[Depends(need_login)])
-def probes(minutes: int = 120):
-    """Latest reachability of each target plus a per-minute history for the last `minutes`."""
+def probes(minutes: int = 120, bucket: int = 0):
+    """Reachability of each target: the latest check, uptime, the outages in the window, and a bucketed history for the chart."""
+    minutes = max(5, min(minutes, 10080))
+    bucket = bucket if bucket > 0 else (1 if minutes <= 360 else 5 if minutes <= 1440 else 30)
     with db.conn() as c:
         targets = [r["target"] for r in c.execute("SELECT DISTINCT target FROM probes WHERE at > now() - interval '1 day' ORDER BY 1").fetchall()]
         out = []
@@ -695,12 +719,19 @@ def probes(minutes: int = 120):
             since = c.execute("""SELECT min(at) AS at FROM probes WHERE target=%s AND ok = %s AND at > coalesce(
                                     (SELECT max(at) FROM probes WHERE target=%s AND ok <> %s), '-infinity')""",
                               (t, last["ok"], t, last["ok"])).fetchone()["at"]
-            hist = c.execute("""SELECT date_trunc('minute', at) AS at, bool_and(ok) AS ok, max(ms) AS ms FROM probes
-                                WHERE target=%s AND at > now() - make_interval(mins => %s) GROUP BY 1 ORDER BY 1""", (t, max(5, min(minutes, 1440)))).fetchall()
-            up = c.execute("SELECT round(100.0 * avg(ok::int), 1) AS p FROM probes WHERE target=%s AND at > now() - interval '24 hours'", (t,)).fetchone()["p"]
+            rows = c.execute("""SELECT extract(epoch FROM at)::float8 AS t, ok, ms FROM probes
+                                WHERE target=%s AND at > now() - make_interval(mins => %s) ORDER BY at""", (t, minutes)).fetchall()
+            hist = c.execute("""SELECT to_timestamp(floor(extract(epoch FROM at) / %s) * %s) AS at, count(*)::int AS n,
+                                       count(*) FILTER (WHERE NOT ok)::int AS failed, coalesce(max(ms) FILTER (WHERE ok), 0)::int AS ms
+                                FROM probes WHERE target=%s AND at > now() - make_interval(mins => %s) GROUP BY 1 ORDER BY 1""",
+                              (bucket * 60, bucket * 60, t, minutes)).fetchall()
+            outs = find_outages([(r["t"], r["ok"]) for r in rows])
+            up = round(100.0 * sum(1 for r in rows if r["ok"]) / len(rows), 1) if rows else None
             out.append({"target": t, "ok": last["ok"], "ms": last["ms"], "detail": last["detail"], "checked": last["at"], "since": since,
-                        "uptime_24h": float(up) if up is not None else None, "history": hist})
-    return JSONResponse(json.loads(json.dumps({"targets": out}, default=_iso)))
+                        "uptime_pct": up, "checks": len(rows), "bucket_min": bucket, "history": hist,
+                        "outages": [{"start": a, "end": b, "going": g, "seconds": int(b - a)} for a, b, g in outs],
+                        "down_seconds": sum(int(b - a) for a, b, _ in outs), "longest_seconds": max((int(b - a) for a, b, _ in outs), default=0)})
+    return JSONResponse(json.loads(json.dumps({"targets": out, "minutes": minutes}, default=_iso)))
 
 
 @app.get("/api/overview", dependencies=[Depends(need_login)])

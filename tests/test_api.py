@@ -613,3 +613,26 @@ def test_min_threads_floor_keeps_runners_going_under_backoff_and_outage(client, 
     # a manual pause from the dashboard is still honoured
     login.post("/api/projects/floored/settings", json={"threads": 32, "delay_ms": 0, "auto_backoff": True, "paused": True})
     assert beat()["paused"] is True
+
+
+def test_find_outages_merges_close_stretches_and_ignores_short_blips():
+    from scrape_hub.app import find_outages
+    t = lambda m: m * 60
+    ok = lambda m: (t(m), True)
+    bad = lambda m: (t(m), False)
+    rows = [ok(0), bad(1), bad(2), ok(3),                      # two failures: not an outage
+            bad(10), bad(11), bad(12), ok(13), bad(14), bad(15), bad(16), ok(17),   # one lucky pass inside: one outage
+            ok(30), bad(40), bad(41), bad(42)]                 # still down at the end
+    out = find_outages(rows)
+    assert [(a // 60, b // 60, g) for a, b, g in out] == [(10, 17, False), (40, 43, True)]
+
+
+def test_probes_api_reports_outages_and_history(client, clean, login):
+    with db.conn() as c:
+        for i in range(30):       # 30 checks over the last 30 minutes, the middle ten failed
+            c.execute("INSERT INTO probes (target, at, ok, ms) VALUES ('site', now() - make_interval(mins => %s), %s, 900)", (30 - i, not (10 <= i < 20)))
+    t = login.get("/api/probes?minutes=60&bucket=5").json()["targets"][0]
+    assert t["target"] == "site" and t["checks"] == 30 and t["uptime_pct"] == 66.7
+    assert len(t["outages"]) == 1 and 540 <= t["outages"][0]["seconds"] <= 660 and t["down_seconds"] == t["outages"][0]["seconds"]
+    assert t["ok"] is True and sum(h["n"] for h in t["history"]) == 30 and any(h["failed"] for h in t["history"])
+    assert login.get("/api/probes?minutes=999999").json()["minutes"] == 10080

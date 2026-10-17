@@ -37,6 +37,8 @@ a.act{display:inline-block;text-decoration:none;font:inherit;font-size:12px;padd
 a.act:hover{border-color:var(--accent)}
 button.act{font:inherit;font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--text);cursor:pointer}
 button.act:hover{border-color:var(--accent)}
+.pstats{display:flex;flex-wrap:wrap;gap:22px;margin:4px 0 12px}.pstats b{display:block;font-size:20px;line-height:1.2}.pstats span{color:var(--dim);font-size:12px}
+.pax{font-size:10px;fill:var(--dim)}.pol{width:100%;border-collapse:collapse;margin-top:10px;font-size:12px}.pol td,.pol th{padding:3px 12px 3px 0;text-align:left;border-top:1px solid var(--line);font-weight:400}.pol th{color:var(--dim);font-size:11px}
 .sub{margin-top:10px}.sub summary{cursor:pointer;color:var(--dim);font-size:12px}
 .chartbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 10px}
 .seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -117,6 +119,8 @@ td.n,th.n{text-align:right}.scroll{overflow-x:auto}
 <div class="chartbar"><div class="seg" id="ranges" role="group" aria-label="time range"></div>
 <div class="seg" id="views" role="group" aria-label="view"><button data-v="chart" aria-pressed="true">Chart</button><button data-v="table" aria-pressed="false">Table</button></div></div>
 <div class="chartwrap" id="chart"></div><div class="lg" id="legend"></div></section>
+<section id="portal" hidden><div class="row"><h2 style="margin:0" id="ptitle">Portal reachability</h2><div class="seg" id="pranges" role="group" aria-label="time range"></div></div>
+<div class="pstats" id="pstats"></div><div class="chartwrap" id="pchart"></div><div id="pouts"></div></section>
 <section><h2>Ongoing runs</h2><div id="runs"></div></section>
 <section><h2>History</h2><div class="hh"><span>outcome</span><span>run</span><span>started</span><span class="n">took</span><span class="n">slices</span><span class="n">records</span><span class="n">err / blocked</span><span>IPs</span></div><div id="hist"></div><div id="more" style="margin-top:8px"></div></section>
 <section><h2>Repositories</h2><div class="chips" id="repos"></div></section>
@@ -319,6 +323,44 @@ function initChartControls(){
  $("views").addEventListener("click",e=>{const b=e.target.closest("[data-v]");if(!b)return;cview=b.dataset.v;
   document.querySelectorAll("#views button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.v===cview));drawChart();if(lastOv)drawLegend(lastOv)});
 }
+
+const PR={"1h":{min:60},"6h":{min:360},"24h":{min:1440},"7d":{min:10080}};let prange="24h";
+const fmtDur=sec=>{const m=Math.round(sec/60);return m<1?"under 1 min":m<60?m+" min":Math.floor(m/60)+" h "+String(m%60).padStart(2,"0")+" min"};
+function renderProbes(pr){
+ const header=pr.targets.map(t=>{const ago=t.since?Math.round((Date.now()-new Date(t.since))/60000):null,
+  tip=esc(`${t.target}: checked ${new Date(t.checked).toLocaleTimeString()}${t.detail?", "+t.detail:""}`);
+  return `<span class="pill ${t.ok?"healthy":"unhealthy"}" style="margin-left:8px" title="${tip}">${esc(t.target)} ${t.ok?"up "+t.ms+" ms":"DOWN"+(ago!==null?" "+(ago<90?ago+" min":Math.round(ago/60)+" h"):"")}</span>`}).join("");
+ $("probes").innerHTML=header;
+ const sec=$("portal");if(!pr.targets.length){sec.hidden=true;return}sec.hidden=false;
+ if(!$("pranges").children.length){$("pranges").innerHTML=Object.keys(PR).map(k=>`<button data-r="${k}" aria-pressed="${k===prange}">${k}</button>`).join("");
+  $("pranges").addEventListener("click",e=>{const b=e.target.closest("[data-r]");if(!b||b.dataset.r===prange)return;prange=b.dataset.r;
+   document.querySelectorAll("#pranges button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.r===prange));tick()})}
+ const t=pr.targets[0];$("ptitle").textContent="Portal reachability: "+t.target;
+ const nOut=t.outages.length,down=t.down_seconds,span=pr.minutes*60;
+ $("pstats").innerHTML=`<div><b class="${t.ok?"ok":"bad"}">${t.ok?"Up":"DOWN"}</b><span>${t.ok?"answering in "+t.ms+" ms":esc((t.detail||"not answering").replace(/HTTPSConnectionPool.*$/,"").slice(0,60))}</span></div>
+  <div><b>${t.uptime_pct==null?"?":t.uptime_pct+"%"}</b><span>of ${t.checks} checks passed (${prange})</span></div>
+  <div><b>${nOut?fmtDur(down):"none"}</b><span>down in ${nOut} outage${nOut===1?"":"s"}${down?` (${(100*down/span).toFixed(0)}% of the time)`:""}</span></div>
+  <div><b>${nOut?fmtDur(t.longest_seconds):"-"}</b><span>longest outage</span></div>`;
+ const H=t.history,B=t.bucket_min*60,end=Math.ceil(Date.now()/1000/B)*B,n=Math.round(pr.minutes/t.bucket_min),start=end-n*B;
+ const byT=new Map(H.map(h=>[Math.floor(new Date(h.at)/1000/B)*B,h]));
+ const W=1000,L=44,R=8,pw=W-L-R,cw=pw/n,sy=22,sh=26,ly=sy+sh+26,lh=110,hh=ly+lh+22;
+ const X=ts=>L+(ts-start)/(end-start)*pw,Y=ms=>ly+lh-Math.min(ms,20000)/20000*lh;
+ const tf=ts=>{const d=new Date(ts*1000);return (pr.minutes>1440?d.toLocaleDateString([],{day:"numeric",month:"short"})+" ":"")+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})};
+ let g=`<svg viewBox="0 0 ${W} ${hh}" width="100%" role="img" aria-label="Portal reachability over ${prange}"><text x="${L}" y="12" class="pax">checks per ${t.bucket_min} min: green answered, amber slow or some failed, red all failed</text>`;
+ for(let i=0;i<n;i++){const ts=start+i*B,h=byT.get(ts);
+  let col="var(--line)",lab="no checks";
+  if(h){if(h.failed===h.n){col="var(--bad)";lab="down"}else if(h.failed>0||h.ms>5000){col="var(--warn)";lab=h.failed?`${h.failed} of ${h.n} checks failed`:"slow ("+h.ms+" ms)"}else{col="var(--ok)";lab="up, "+h.ms+" ms"}}
+  g+=`<rect x="${(L+i*cw).toFixed(2)}" y="${sy}" width="${Math.max(.6,cw-.4).toFixed(2)}" height="${sh}" fill="${col}"><title>${tf(ts)}: ${lab}</title></rect>`}
+ for(const v of [0,5,10,20]){g+=`<line x1="${L}" x2="${W-R}" y1="${Y(v*1000).toFixed(1)}" y2="${Y(v*1000).toFixed(1)}" stroke="var(--line)" stroke-dasharray="${v?"2 3":"0"}"/><text x="${L-6}" y="${(Y(v*1000)+3).toFixed(1)}" text-anchor="end" class="pax">${v}${v===20?"+":""} s</text>`}
+ g+=`<text x="${L}" y="${ly-8}" class="pax">answer time of the search page (failed checks plot at 20 s)</text>`;
+ const pts=H.map(h=>`${X(new Date(h.at)/1000+B/2).toFixed(1)},${Y(h.failed===h.n?20000:h.ms).toFixed(1)}`).join(" ");
+ g+=`<polyline points="${pts}" fill="none" stroke="var(--s1)" stroke-width="1.4"/>`;
+ for(const h of H)if(h.failed===h.n)g+=`<circle cx="${X(new Date(h.at)/1000+B/2).toFixed(1)}" cy="${Y(20000).toFixed(1)}" r="1.8" fill="var(--bad)"/>`;
+ const step=pr.minutes<=60?600:pr.minutes<=360?3600:pr.minutes<=1440?4*3600:24*3600;
+ for(let ts=Math.ceil(start/step)*step;ts<end;ts+=step)g+=`<text x="${X(ts).toFixed(1)}" y="${hh-6}" text-anchor="middle" class="pax">${tf(ts)}</text>`;
+ $("pchart").innerHTML=g+"</svg>";
+ $("pouts").innerHTML=nOut?`<table class="pol"><tr><th>Outage (3 or more failed checks in a row)</th><th>Length</th></tr>${t.outages.slice().reverse().slice(0,12).map(o=>`<tr><td>${tf(o.start)} to ${o.going?"now (ongoing)":tf(o.end)}</td><td class="${o.going?"bad":""}">${fmtDur(o.seconds)}</td></tr>`).join("")}</table>`:`<div class="dim" style="margin-top:8px">No outages in this period.</div>`;
+}
 let lastOv=null;
 
 const grpOpen=new Map(),prevRec=new Map();
@@ -400,9 +442,7 @@ async function tick(){
   const [ov,runs,tp,ips,past]=await Promise.all([j("/api/overview"),j("/api/runs?limit=200"),j(`/api/throughput?minutes=${RANGES[range].min}&bucket=${RANGES[range].bucket}`),j("/api/ips"),j(`/api/workflow-runs?state=past&limit=${histLimit}`)]);window.__past=past.runs;lastHist=past.runs;
   const v=$("verdict"),has=ov.projects.length;v.textContent=has?ov.verdict:"no data";v.className="pill "+(has?ov.verdict:"dim");
   kpis(ov);
-  try{const pr=await j("/api/probes");$("probes").innerHTML=pr.targets.map(t=>{const ago=t.since?Math.round((Date.now()-new Date(t.since))/60000):null,
-   tip=esc(`${t.target}: checked ${new Date(t.checked).toLocaleTimeString()}, ${t.uptime_24h??"?"}% up in 24 h${t.detail?", "+t.detail:""}`);
-   return `<span class="pill ${t.ok?"healthy":"unhealthy"}" style="margin-left:8px" title="${tip}">${esc(t.target)} ${t.ok?"up "+t.ms+" ms":"DOWN"+(ago!==null?" "+(ago<90?ago+" min":Math.round(ago/60)+" h"):"")}</span>`}).join("")}catch(e){}
+  try{const pr=await j("/api/probes?minutes="+PR[prange].min);renderProbes(pr)}catch(e){}
   const det={};await Promise.all(ov.projects.map(async p=>{try{det[p.project]=await j("/api/projects/"+encodeURIComponent(p.project))}catch(e){}}));
   $("projects").innerHTML=ov.projects.map(p=>projectCard(p,runs.runs,det[p.project])).join("")||'<section class="dim">No projects have reported yet.</section>';
   lastOv=ov;chart(tp.points,tp.bucket||1,ov);runnerRows(runs.runs,past.runs[0]);histRows(past.runs);
