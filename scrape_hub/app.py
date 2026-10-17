@@ -273,7 +273,7 @@ def list_queue(name: str, status: str = "pending", after: str = "", limit: int =
     limit = min(max(limit, 1), 2000)
     with db.conn() as c:
         ensure_project(c, name, who)
-        rows = c.execute("""SELECT key, partition_id, status, payload FROM queue
+        rows = c.execute("""SELECT key, partition_id, status, attempts, payload FROM queue
                             WHERE project=%s AND status=%s AND key > %s ORDER BY key LIMIT %s""", (name, status, after, limit)).fetchall()
     return {"items": rows, "next": rows[-1]["key"] if len(rows) == limit else None}
 
