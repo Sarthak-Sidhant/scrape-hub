@@ -171,14 +171,17 @@ def effective_settings(c, project: str) -> dict:
     """What runners should actually do right now: the saved settings, backed off if the target is pushing back.
 
     Backoff (when auto_backoff is on): in the last 3 minutes, if over 10% of work was blocked (with enough samples) or at least
-    5 HTTP 429/403/503 responses were counted, or dropped connections exceed half the records stored, halve the threads (min 1) and enforce at least 500 ms between requests.
+    5 HTTP 429/403/503 responses were counted, or dropped connections exceed half the records stored, halve the threads (min 1, or the project's `min_threads` floor if set, in which case the 500 ms spacing is skipped).
     """
     row = c.execute("SELECT settings FROM projects WHERE name=%s", (project,)).fetchone()
     saved = {**DEFAULT_SETTINGS, **((row or {}).get("settings") or {})}
     eff = {**saved, "throttled": False, "reason": ""}
+    floor = max(0, int(saved.get("min_threads") or 0))      # the slowest the throttles may make a process, so the rate never collapses
     if saved.get("probe") and not saved["paused"]:
         down = target_down(c, saved["probe"])
-        if down:
+        if down and floor:
+            eff.update(threads=min(saved["threads"], floor), throttled=True, reason=down.replace("runners are holding until it answers", f"running at the minimum of {floor} threads"))
+        elif down:
             eff.update(paused=True, throttled=True, reason=down)
     if saved["auto_backoff"] and not saved["paused"]:
         w = c.execute("""SELECT coalesce(sum(blocked),0) AS b, coalesce(sum(records),0) AS r FROM batches
@@ -190,8 +193,8 @@ def effective_settings(c, project: str) -> dict:
         b, r, n, drops = int(w["b"]), int(w["r"]), float(m["n"]), float(e["n"])
         dropping = drops >= 20 and drops > 0.5 * r      # dropped connections: roughly 8% of requests (a tender takes ~6)
         if (b + r >= 10 and b / max(1, b + r) > 0.10) or n >= 5 or dropping:
-            eff.update(threads=max(1, saved["threads"] // 2), delay_ms=max(saved["delay_ms"], 500), throttled=True,
-                       reason=f"{b} blocked, {int(n)} refusals and {int(drops)} dropped connections in the last 3 minutes")
+            eff.update(threads=max(1, saved["threads"] // 2, min(floor, saved["threads"])), delay_ms=saved["delay_ms"] if floor else max(saved["delay_ms"], 500),
+                       throttled=True, reason=f"{b} blocked, {int(n)} refusals and {int(drops)} dropped connections in the last 3 minutes")
     return eff
 
 

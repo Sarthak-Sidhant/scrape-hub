@@ -593,3 +593,23 @@ def test_runners_hold_while_the_target_is_down_and_resume_when_it_answers(client
     assert beat()["paused"] is True
     pr = login.get("/api/probes").json()["targets"][0]
     assert pr["target"] == "site" and pr["ok"] is False and pr["since"]
+
+
+def test_min_threads_floor_keeps_runners_going_under_backoff_and_outage(client, clean, login):
+    h = hdr()
+    rid = start(client, project="floored")
+    login.post("/api/projects/floored/settings", json={"threads": 32, "delay_ms": 0, "auto_backoff": True})
+    with db.conn() as c:
+        c.execute("UPDATE projects SET settings = settings || '{\"probe\": \"site\", \"min_threads\": 20}'::jsonb WHERE name='floored'")
+    beat = lambda: client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [], "metrics": {"http_429": 9}}, headers=h)
+    eff = beat()
+    assert eff["throttled"] is True and eff["threads"] == 20 and eff["delay_ms"] == 0 and eff["paused"] is False   # 32 // 2 = 16 would be below the floor
+    with db.conn() as c:
+        for _ in range(3):
+            c.execute("INSERT INTO probes (target, ok, ms) VALUES ('site', false, 5)")
+    eff = beat()
+    assert eff["paused"] is False and eff["threads"] == 20
+    # a manual pause from the dashboard is still honoured
+    login.post("/api/projects/floored/settings", json={"threads": 32, "delay_ms": 0, "auto_backoff": True, "paused": True})
+    assert beat()["paused"] is True
