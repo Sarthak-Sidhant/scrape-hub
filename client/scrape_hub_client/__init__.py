@@ -201,11 +201,12 @@ class HubClient(_Auth):
                 print(f"[hub] heartbeat failed: {e}", flush=True)
 
     # -- queue --------------------------------------------------------------
-    def claim(self, limit=1, steal=False):
+    def claim(self, limit=1, steal=False, retry_failed=False):
         """Next queue items for this runner's slice. steal=True also takes work from other slices once this one is empty.
-        After the call, `hub.queue` is {"pending": n, "claimed": n} for the whole project, so a runner that gets nothing can
-        tell "all done" from "others are still working and may add more"."""
-        out = self.call("POST", f"/api/v1/runs/{self.run_id}/claim", {"project": self.project, "limit": limit, "steal": steal})
+        retry_failed=True also hands out windows that failed a few minutes ago once nothing is pending (never while the target
+        is down). After the call, `hub.queue` is {"pending": n, "claimed": n, "retry": n} for the whole project, so a runner that
+        gets nothing can tell "all done" from "others are working, or failed windows are waiting to be retried"."""
+        out = self.call("POST", f"/api/v1/runs/{self.run_id}/claim", {"project": self.project, "limit": limit, "steal": steal, "retry_failed": retry_failed})
         self.queue = out.get("queue", {})
         return out["items"]
 

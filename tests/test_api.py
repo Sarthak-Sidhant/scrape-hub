@@ -677,3 +677,25 @@ def test_timeline_has_rates_checks_outages_and_runs(client, clean, login):
     assert login.get("/api/timeline?project=nope").json()["project"] == "timed"          # unknown project falls back to the busiest
     anon = __import__("fastapi.testclient", fromlist=["TestClient"]).TestClient(__import__("scrape_hub.app", fromlist=["app"]).app)
     assert anon.get("/explore", follow_redirects=False).status_code == 303 and anon.get("/api/timeline").status_code == 401
+
+
+def test_claim_retries_failed_windows_only_when_asked_and_after_a_pause(client, clean, login):
+    h = hdr()
+    rid = start(client, project="retrying")
+    with db.conn() as c:
+        for k in ("a", "b", "c"):
+            c.execute("INSERT INTO queue (project, key, partition_id, status, attempts, claimed_at) VALUES ('retrying', %s, 0, 'failed', 3, now() - interval '10 minutes')", (k,))
+        c.execute("UPDATE queue SET claimed_at = now() WHERE key='c'")                     # c failed just now
+        c.execute("UPDATE queue SET attempts = 99 WHERE key='b'")                          # b has been tried too often
+    claim = lambda **kw: client.post(f"/api/v1/runs/{rid}/claim", json={"project": "retrying", "limit": 5, **kw}, headers=h).json()
+    assert claim(steal=True)["items"] == []                                               # a plain claim never touches failed windows
+    out = claim(steal=True, retry_failed=True)
+    assert [i["key"] for i in out["items"]] == ["a"]                                      # not b (given up), not c (too soon)
+    assert out["queue"]["claimed"] == 1 and out["queue"]["retry"] == 1                    # c is still waiting to be retried
+    # while the target is down or throttled nothing is retried
+    with db.conn() as c:
+        c.execute("UPDATE queue SET claimed_at = now() - interval '10 minutes' WHERE key='c'")
+        c.execute("UPDATE projects SET settings = settings || '{\"probe\": \"site\", \"min_threads\": 0}'::jsonb WHERE name='retrying'")
+        for _ in range(3):
+            c.execute("INSERT INTO probes (target, ok, ms) VALUES ('site', false, 5)")
+    assert claim(steal=True, retry_failed=True)["items"] == []

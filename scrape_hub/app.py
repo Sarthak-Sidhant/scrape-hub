@@ -98,6 +98,7 @@ class Claim(BaseModel):
     project: str
     limit: int = Field(default=1, ge=1, le=100)
     steal: bool = False   # when this slice has nothing left, take pending work from any other slice
+    retry_failed: bool = False   # when nothing is pending either, take windows that failed a while ago (see RETRY_*)
 
 
 class Complete(BaseModel):
@@ -160,6 +161,8 @@ class SettingsIn(BaseModel):
     auto_backoff: bool = True
 
 
+RETRY_AFTER_S = 180          # a failed window is offered again after this long
+RETRY_MAX_ATTEMPTS = 40      # claims per window before it is given up on (so a window that can never work does not loop forever)
 PROBE_FAILS_TO_PAUSE = 3      # consecutive failed checks (one a minute) before runners are told to hold
 
 
@@ -479,12 +482,24 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
         rows = c.execute(claim_sql.format(part="AND partition_id %% %(total)s = %(idx)s"), args).fetchall()
         if not rows and body.steal:
             rows = c.execute(claim_sql.format(part=""), args).fetchall()
+        retry_sql = """UPDATE queue SET status='claimed', claimed_by=%(run)s, claimed_at=now(), attempts=attempts+1
+               WHERE (project, key) IN (
+                   SELECT project, key FROM queue
+                   WHERE project=%(project)s AND status='failed' AND attempts < %(max)s
+                     AND claimed_at < now() - make_interval(secs => %(after)s)
+                   ORDER BY claimed_at, key LIMIT %(limit)s FOR UPDATE SKIP LOCKED)
+               RETURNING key, payload"""
+        if not rows and body.steal and body.retry_failed and not settings["throttled"]:
+            # every window has been tried once: try the failed ones again, but not while the target is down or being throttled
+            rows = c.execute(retry_sql, {**args, "max": RETRY_MAX_ATTEMPTS, "after": RETRY_AFTER_S}).fetchall()
         counts = {r["status"]: r["n"] for r in c.execute(
             "SELECT status, count(*) AS n FROM queue WHERE project=%s AND status IN ('pending','claimed') GROUP BY status",
             (body.project,)).fetchall()}
+        retry = c.execute("SELECT count(*) AS n FROM queue WHERE project=%s AND status='failed' AND attempts < %s",
+                          (body.project, RETRY_MAX_ATTEMPTS)).fetchone()["n"]
         c.execute("UPDATE runs SET last_seen=now() WHERE id=%s", (run_id,))
     return {"items": [{"key": r["key"], "payload": r["payload"]} for r in rows], "settings": settings,
-            "queue": {"pending": counts.get("pending", 0), "claimed": counts.get("claimed", 0)}}
+            "queue": {"pending": counts.get("pending", 0), "claimed": counts.get("claimed", 0), "retry": retry}}
 
 
 @app.post("/api/v1/runs/{run_id}/complete")
