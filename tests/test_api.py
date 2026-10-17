@@ -636,3 +636,14 @@ def test_probes_api_reports_outages_and_history(client, clean, login):
     assert len(t["outages"]) == 1 and 540 <= t["outages"][0]["seconds"] <= 660 and t["down_seconds"] == t["outages"][0]["seconds"]
     assert t["ok"] is True and sum(h["n"] for h in t["history"]) == 30 and any(h["failed"] for h in t["history"])
     assert login.get("/api/probes?minutes=999999").json()["minutes"] == 10080
+
+
+def test_reports_are_served_only_behind_login_and_only_by_safe_names(client, clean, login, tmp_path):
+    from scrape_hub import app as hub_app
+    (tmp_path / "chart.png").write_bytes(b"\x89PNG fake")
+    hub_app.REPORTS = tmp_path
+    assert login.get("/reports/chart.png").content.startswith(b"\x89PNG")
+    assert login.get("/reports/..%2Fsecret.png").status_code == 404 and login.get("/reports/chart.exe").status_code == 404
+    from fastapi.testclient import TestClient
+    anon = TestClient(hub_app.app)                       # no login cookie
+    assert anon.get("/reports/chart.png", follow_redirects=False).status_code in (302, 303, 401)

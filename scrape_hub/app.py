@@ -9,7 +9,7 @@ from typing import Any, Optional
 from urllib.parse import parse_qs
 
 from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
 from . import config, dash_auth, db, health
@@ -704,6 +704,17 @@ def find_outages(rows, gap_s=360, min_fails=3):
         else:
             merged.append([st, en, going])
     return merged
+
+
+REPORTS = WEB / "reports"
+
+
+@app.get("/reports/{name}", dependencies=[Depends(need_login)])
+def report_file(name: str):
+    """Charts and exports saved by hand under web/reports/, served behind the dashboard login."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,80}\.(png|csv|html)", name) or not (REPORTS / name).is_file():
+        raise HTTPException(404, "no such report")
+    return FileResponse(REPORTS / name)
 
 
 @app.get("/api/probes", dependencies=[Depends(need_login)])
