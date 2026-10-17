@@ -728,3 +728,19 @@ def test_backfill_todo_read_urls_and_patch_leave_other_fields_alone(client, clea
     stranger = start(client, project="backfill2", repo="Sarthak-Sidhant/other", run_id="3")
     assert client.post(f"/api/v1/runs/{stranger}/patch-records", headers=hdr(repo="Sarthak-Sidhant/other", run_id="3"),
                        json={"target": "tenders", "patches": [{"record_id": "2019_X_1_1", "value": {}}]}).status_code == 403
+
+
+def test_tender_lookup_finds_by_id_prefix_and_returns_sections_and_documents(client, clean, login):
+    h = hdr()
+    rid = start(client, project="x-tenders")
+    client.post(f"/api/v1/runs/{rid}/batches", headers=h, json={"records": [
+        {"record_id": "2025_DRDO_875304_1", "data": {"org_name": "DRDO", "details": {"fields": {"tender_title": "Roads", "tender_value": "5"},
+          "sections": {"nit_documents": [{"name": "a.pdf"}]}, "documents": [{"name": "f.pdf", "kind": "document", "status": "refused", "reason": "x"}]}}},
+        {"record_id": "2025_DRDO_875999_1", "data": {"org_name": "DRDO", "details": {"fields": {"tender_title": "Other"}}}}]})
+    out = login.get("/api/tender?q=2025_DRDO_8753").json()
+    assert out["matches"] == ["2025_DRDO_875304_1"] and out["tender"]["fields"]["tender_title"] == "Roads"
+    assert out["tender"]["sections"]["nit_documents"][0]["name"] == "a.pdf" and out["tender"]["documents"][0]["status"] == "refused"
+    both = login.get("/api/tender?q=2025_DRDO_875").json()
+    assert len(both["matches"]) == 2 and both["tender"]["record_id"] == "2025_DRDO_875304_1"
+    assert login.get("/api/tender?q=25").json() == {"matches": [], "tender": None}            # too short to search
+    assert login.get("/api/tender?q=2025_%25").json()["matches"] == []                          # a % in the query is not a wildcard

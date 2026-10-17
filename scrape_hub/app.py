@@ -842,6 +842,40 @@ def report_file(name: str):
     return FileResponse(REPORTS / name)
 
 
+@app.get("/tender", response_class=HTMLResponse)
+def tender_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", 303)
+    return page("tender.html")
+
+
+@app.get("/api/tender", dependencies=[Depends(need_login)])
+def tender_lookup(q: str = "", project: str = ""):
+    """Find a stored tender by the start of its id (e.g. 2025_DRDO_875304) and return what the hub holds about it: the parsed
+    fields, the document lists parsed from the details page, and the status of every document file that was downloaded."""
+    q = q.strip()[:80]
+    if len(q) < 4:
+        return JSONResponse({"matches": [], "tender": None})
+    with db.conn() as c:
+        if not project:
+            row = c.execute("SELECT name FROM projects WHERE name LIKE %s ORDER BY created_at LIMIT 1", ("%tenders",)).fetchone()
+            project = row["name"] if row else ""
+        like = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        ids = [r["record_id"] for r in c.execute("SELECT record_id FROM records WHERE project=%s AND record_id LIKE %s ORDER BY record_id LIMIT 20", (project, like)).fetchall()]
+        tender = None
+        if ids:
+            rid = q if q in ids else ids[0]
+            row = c.execute("SELECT record_id, data, scraped_at FROM records WHERE project=%s AND record_id=%s", (project, rid)).fetchone()
+            d = row["data"] or {}
+            det = d.get("details") or {}
+            f = det.get("fields") or {}
+            keep = ("tender_title", "tender_ref_no", "tender_type", "tender_category", "published_date", "bid_opening_date", "tender_value", "emd_amount", "stage", "location")
+            tender = {"record_id": row["record_id"], "org_name": d.get("org_name"), "scraped_at": row["scraped_at"], "pages_key": det.get("pages_key"),
+                      "fields": {k: f.get(k) for k in keep if f.get(k) not in (None, "")}, "sections": det.get("sections"),
+                      "documents": [{k: x.get(k) for k in ("name", "kind", "status", "bytes", "content_type", "reason", "key")} for x in (det.get("documents") or [])]}
+    return JSONResponse(json.loads(json.dumps({"project": project, "matches": ids, "tender": tender}, default=_iso)))
+
+
 @app.get("/api/probes", dependencies=[Depends(need_login)])
 def probes(minutes: int = 120, bucket: int = 0):
     """Reachability of each target: the latest check, uptime, the outages in the window, and a bucketed history for the chart."""

@@ -1,0 +1,49 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Scrape hub: tender lookup</title><style>
+:root{--bg:#0b0f14;--panel:#111820;--panel2:#16202b;--line:#26323f;--text:#d5dde6;--dim:#7d8b99;--accent:#6cb6ff;--ok:#5fcf8a;--warn:#e8b44c;--bad:#ef6a6a}
+@media (prefers-color-scheme:light){:root{--bg:#f3f5f8;--panel:#fff;--panel2:#f6f8fb;--line:#d3dae2;--text:#1d2630;--dim:#66727f;--accent:#1f6fc0;--ok:#2a9d5c;--warn:#b7791f;--bad:#cf3f3f}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+a{color:var(--accent)}.dim{color:var(--dim)}.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+header{position:sticky;top:0;background:var(--bg);display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:14px;margin:0;letter-spacing:.08em}header .sp{flex:1}
+main{padding:16px;display:grid;gap:14px;max-width:1100px;margin:0 auto}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+h2{font-size:11px;margin:0 0 10px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;font-weight:600}
+input{font:inherit;font-size:13px;padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--text);width:min(520px,100%)}
+button{font:inherit;font-size:12px;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--text);cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:3px 12px 3px 0;text-align:left;border-top:1px solid var(--line);font-weight:400;vertical-align:top}th{color:var(--dim);font-size:11px}
+td.n,th.n{text-align:right}.kv{display:grid;grid-template-columns:max-content 1fr;gap:2px 16px}.kv span:nth-child(odd){color:var(--dim)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.chips a{padding:1px 9px;border:1px solid var(--line);border-radius:99px;text-decoration:none;font-size:12px}
+</style></head><body>
+<header><h1>TENDER LOOKUP</h1><span class="sp"></span><a href="/">dashboard</a><a href="/explore">rate explorer</a><a href="/logout">sign out</a></header>
+<main>
+<section><form id="f"><input id="q" placeholder="tender id, e.g. 2025_DRDO_875304_1 (start of it is enough)" autocomplete="off" aria-label="tender id" autofocus> <button>Look up</button></form>
+<div class="chips" id="matches"></div><div class="dim" id="msg" style="margin-top:8px">Shows what the hub holds for one tender: its fields, the document lists parsed from the details page, and the document files that were downloaded.</div></section>
+<div id="out" style="display:grid;gap:14px"></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const kb=n=>n==null?"":Number(n).toLocaleString(undefined,{maximumFractionDigits:1});
+const tbl=(head,rows)=>rows.length?`<table><tr>${head.map(h=>`<th class="${h[1]||""}">${esc(h[0])}</th>`).join("")}</tr>${rows.map(r=>`<tr>${r.map((c,i)=>`<td class="${head[i][1]||""}">${c}</td>`).join("")}</tr>`).join("")}</table>`:`<div class="dim">none</div>`;
+async function look(q){
+ $("msg").textContent="looking up...";
+ const r=await fetch("/api/tender?q="+encodeURIComponent(q));if(r.status===401){location="/login";return}
+ const d=await r.json();$("matches").innerHTML=d.matches.length>1?d.matches.map(m=>`<a href="#${esc(m)}" data-id="${esc(m)}">${esc(m)}</a>`).join(""):"";
+ if(!d.tender){$("msg").textContent=q.length<4?"type at least 4 characters of the id":"no stored tender starts with that";$("out").innerHTML="";return}
+ const t=d.tender,s=t.sections;$("msg").textContent=d.matches.length>1?`${d.matches.length}${d.matches.length===20?"+":""} tenders start with that; showing ${t.record_id}`:"";
+ let h=`<section><h2>${esc(t.record_id)}</h2><div class="kv"><span>organisation</span><span>${esc(t.org_name)}</span>${Object.entries(t.fields).map(([k,v])=>`<span>${esc(k.replace(/_/g," "))}</span><span>${esc(v)}</span>`).join("")}<span>stored</span><span>${esc(new Date(t.scraped_at).toLocaleString())}</span></div></section>`;
+ if(!s)h+=`<section><h2>Document lists from the details page</h2><div class="warn">not parsed yet for this tender (the backfill has not reached it)</div></section>`;
+ else{
+  h+=`<section><h2>NIT documents (${s.nit_documents.length})</h2>${tbl([["No"],["Name"],["Description"],["Size (KB)","n"]],s.nit_documents.map(x=>[esc(x.no),esc(x.name),esc(x.description),kb(x.size_kb)]))}</section>`;
+  h+=`<section><h2>Work item documents (${s.work_item_documents.length})</h2>${tbl([["No"],["Type"],["Name"],["Description"],["Size (KB)","n"]],s.work_item_documents.map(x=>[esc(x.no),esc(x.type),esc(x.name),esc(x.description),kb(x.size_kb)]))}</section>`;
+  h+=`<section><h2>Covers (${s.cover_count??s.covers.length})</h2>${tbl([["Cover"],["Name"],["Type"],["Description"]],s.covers.map(x=>[esc(x.no),esc(x.cover),esc(x.document_type),esc(x.description)]))}</section>`;
+  h+=`<section><h2>Payment instruments and corrigenda</h2>${tbl([["Mode"],["Instrument"]],s.payment_instruments.map(x=>[esc(x.mode),esc(x.type)]))}<div style="height:10px"></div>${tbl([["No"],["Corrigendum"],["Type"]],s.corrigenda.map(x=>[esc(x.no),esc(x.title),esc(x.type)]))}${s.corrigendum_history_link?'<div class="dim" style="margin-top:6px">the portal also has a corrigendum history page for this tender (not collected)</div>':""}</section>`}
+ h+=`<section><h2>Downloaded document files (${t.documents.length})</h2>${tbl([["Name"],["Kind"],["Status"],["Bytes","n"],["Why not"]],t.documents.map(x=>[esc(x.name),esc(x.kind),`<span class="${x.status==="stored"?"ok":x.status==="refused"?"warn":"bad"}">${esc(x.status)}</span>`,x.bytes==null?"":Number(x.bytes).toLocaleString(),esc(x.reason||"")]))}</section>`;
+ $("out").innerHTML=h;
+}
+$("f").addEventListener("submit",e=>{e.preventDefault();look($("q").value)});
+$("matches").addEventListener("click",e=>{const a=e.target.closest("[data-id]");if(a){e.preventDefault();$("q").value=a.dataset.id;look(a.dataset.id)}});
+const pre=new URLSearchParams(location.search).get("id");if(pre){$("q").value=pre;look(pre)}
+</script></body></html>
