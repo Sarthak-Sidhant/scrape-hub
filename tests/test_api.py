@@ -391,7 +391,7 @@ def test_claim_reports_queue_counts_so_runners_can_wait_for_more_work(client, cl
     client.post("/api/v1/projects/counted/queue", json={"items": [{"key": "a", "partition_id": 0}, {"key": "b", "partition_id": 0}]}, headers=h)
     rid = start(client, project="counted")
     out = client.post(f"/api/v1/runs/{rid}/claim", json={"project": "counted", "limit": 1}, headers=h).json()
-    assert out["queue"] == {"pending": 1, "claimed": 1}
+    assert out["queue"] == {"pending": 1, "claimed": 1, "retry": 0}
 
 
 def test_a_runner_can_add_items_to_another_project_its_repo_owns(client, clean):
