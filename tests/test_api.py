@@ -660,3 +660,20 @@ def test_window_stored_counts_real_records_of_one_window(client, clean):
         good(3, ["01/03/2019", "30/04/2019"]), good(4, org="160")]})
     n = client.post(f"/api/v1/runs/{rid}/window-stored", headers=h, json={"org_id": "159", "from_date": win[0], "to_date": win[1]}).json()
     assert n == {"stored": 2}
+
+
+def test_timeline_has_rates_checks_outages_and_runs(client, clean, login):
+    h = hdr()
+    rid = start(client, project="timed")
+    client.post(f"/api/v1/runs/{rid}/batches", headers=h, json={"records": [{"record_id": str(i), "data": {}} for i in range(5)]})
+    with db.conn() as c:
+        c.execute("UPDATE projects SET settings = settings || '{\"probe\": \"site\"}'::jsonb WHERE name='timed'")
+        for i in range(8):
+            c.execute("INSERT INTO probes (target, at, ok, ms) VALUES ('site', now() - make_interval(mins => %s), %s, 500)", (10 - i, i < 2 or i > 5))
+    t = login.get("/api/timeline?project=timed&minutes=120").json()
+    assert t["project"] == "timed" and t["probe"] == "site"
+    assert sum(n for _, n in t["rate"]) == 5 and len(t["checks"]) == 8
+    assert len(t["outages"]) == 1 and t["runs"][0]["procs"] == 1 and t["runs"][0]["records"] == 5
+    assert login.get("/api/timeline?project=nope").json()["project"] == "timed"          # unknown project falls back to the busiest
+    anon = __import__("fastapi.testclient", fromlist=["TestClient"]).TestClient(__import__("scrape_hub.app", fromlist=["app"]).app)
+    assert anon.get("/explore", follow_redirects=False).status_code == 303 and anon.get("/api/timeline").status_code == 401

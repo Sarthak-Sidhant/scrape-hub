@@ -561,6 +561,13 @@ def index(request: Request):
     return page("index.html")
 
 
+@app.get("/explore", response_class=HTMLResponse)
+def explore(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", 303)
+    return page("explore.html")
+
+
 def project_stats(c, project: str) -> dict:
     stall = config.STALL_AFTER_S
     r = c.execute(
@@ -874,6 +881,35 @@ def throughput(minutes: int = 60, bucket: int = 1):
                FROM batches WHERE at >= now() - make_interval(mins => %(m)s)
                GROUP BY 1, 2 ORDER BY 1""", {"b": bucket * 60, "m": minutes}).fetchall()
     return JSONResponse(json.loads(json.dumps({"points": rows, "bucket": bucket}, default=_iso)))
+
+
+@app.get("/api/timeline", dependencies=[Depends(need_login)])
+def timeline(project: str = "", minutes: int = 10080):
+    """Everything the explorer page draws: records per minute, the target's reachability checks and outages, and when each
+    workflow run started and stopped, over the last `minutes` (batches are kept 7 days)."""
+    minutes = max(30, min(minutes, 10080))
+    with db.conn() as c:
+        projects = [r["name"] for r in c.execute("SELECT name FROM projects ORDER BY created_at, name").fetchall()]
+        if not project or project not in projects:
+            project = max(projects, key=lambda n: (c.execute("SELECT count(*) AS n FROM batches WHERE project=%s", (n,)).fetchone()["n"])) if projects else ""
+        meta = c.execute("SELECT settings FROM projects WHERE name=%s", (project,)).fetchone() or {}
+        probe = (meta.get("settings") or {}).get("probe", "")
+        rate = c.execute("""SELECT (floor(extract(epoch FROM at) / 60) * 60)::bigint AS t, sum(records)::int AS n FROM batches
+                            WHERE project=%s AND at >= now() - make_interval(mins => %s) GROUP BY 1 ORDER BY 1""", (project, minutes)).fetchall()
+        checks = c.execute("""SELECT extract(epoch FROM at)::float8 AS t, ok, ms FROM probes WHERE target=%s
+                              AND at >= now() - make_interval(mins => %s) ORDER BY at""", (probe, minutes)).fetchall() if probe else []
+        runs = c.execute("""SELECT gh_run_id, workflow, extract(epoch FROM min(started_at))::float8 AS start,
+                                   extract(epoch FROM max(coalesce(finished_at, last_seen)))::float8 AS stop, count(*)::int AS procs,
+                                   coalesce(sum(records), 0)::bigint AS records, bool_or(state='running') AS running
+                            FROM runs WHERE project=%s AND started_at >= now() - make_interval(mins => %s) AND gh_run_id <> ''
+                            GROUP BY gh_run_id, workflow ORDER BY 3""", (project, minutes + 60)).fetchall()
+    outs = find_outages([(r["t"], r["ok"]) for r in checks]) if checks else []
+    return JSONResponse(json.loads(json.dumps({
+        "project": project, "projects": projects, "probe": probe, "minutes": minutes,
+        "rate": [[r["t"], r["n"]] for r in rate], "checks": [[r["t"], r["ok"], r["ms"]] for r in checks],
+        "outages": [{"start": a, "end": b, "going": g} for a, b, g in outs],
+        "runs": [{"id": r["gh_run_id"], "workflow": r["workflow"], "start": r["start"], "stop": r["stop"], "procs": r["procs"],
+                  "records": r["records"], "running": r["running"]} for r in runs]}, default=_iso)))
 
 
 @app.get("/api/ips", dependencies=[Depends(need_login)])

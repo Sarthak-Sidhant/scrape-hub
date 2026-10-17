@@ -1,0 +1,149 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Scrape hub: rate explorer</title><style>
+:root{--s1:#3987e5;--bg:#0b0f14;--panel:#111820;--panel2:#16202b;--line:#26323f;--text:#d5dde6;--dim:#7d8b99;--accent:#6cb6ff;--ok:#5fcf8a;--warn:#e8b44c;--bad:#ef6a6a;--bar:#1e2a37}
+@media (prefers-color-scheme:light){:root{--s1:#2a78d6;--bg:#f3f5f8;--panel:#fff;--panel2:#f6f8fb;--line:#d3dae2;--text:#1d2630;--dim:#66727f;--accent:#1f6fc0;--ok:#2a9d5c;--warn:#b7791f;--bad:#cf3f3f;--bar:#e6ebf1}}
+*{box-sizing:border-box}html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--text);font:13px/1.5 ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+a{color:var(--accent)}.dim{color:var(--dim)}.ok{color:var(--ok)}.bad{color:var(--bad)}
+header{position:sticky;top:0;z-index:5;background:var(--bg);display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1px solid var(--line);flex-wrap:wrap}
+h1{font-size:14px;margin:0;letter-spacing:.08em}header .sp{flex:1}
+main{padding:16px;display:grid;gap:14px;max-width:1280px;margin:0 auto}
+section{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px}
+h2{font-size:11px;margin:0 0 10px;color:var(--dim);letter-spacing:.1em;text-transform:uppercase;font-weight:600}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{font:inherit;font-size:12px;padding:3px 11px;border:0;background:transparent;color:var(--dim);cursor:pointer}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button[aria-pressed=true]{background:var(--panel2);color:var(--text);font-weight:700}
+button.act,select{font:inherit;font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--text);cursor:pointer}
+button.act:hover,select:hover{border-color:var(--accent)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.stats{display:flex;flex-wrap:wrap;gap:22px;margin:2px 0 12px}.stats b{display:block;font-size:20px;line-height:1.2}.stats span{color:var(--dim);font-size:12px}
+.wrap{position:relative}svg{display:block;width:100%;height:auto;user-select:none;-webkit-user-select:none}
+.ax{font-size:10px;fill:var(--dim)}.lab{font-size:10px;fill:var(--dim)}
+.tip{position:absolute;pointer-events:none;z-index:4;min-width:190px;white-space:nowrap;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:8px 10px;box-shadow:0 4px 18px rgba(0,0,0,.22);font-size:12px}
+.tip b{display:block;margin-bottom:2px}
+.lg{display:flex;flex-wrap:wrap;gap:16px;margin-top:8px;color:var(--dim);font-size:12px}.lg i{display:inline-block;width:12px;height:8px;border-radius:2px;margin-right:5px}
+label.tg{display:inline-flex;gap:5px;align-items:center;color:var(--dim);font-size:12px;cursor:pointer}
+table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:3px 12px 3px 0;text-align:left;border-top:1px solid var(--line);font-weight:400}th{color:var(--dim);font-size:11px}
+tr.go{cursor:pointer}tr.go:hover td{background:var(--panel2)}
+.hint{color:var(--dim);font-size:12px;margin-top:6px}
+</style></head><body>
+<header><h1>RATE EXPLORER</h1><select id="proj" aria-label="project"></select><span class="sp"></span><a href="/">dashboard</a><a href="/logout">sign out</a></header>
+<main>
+<section>
+ <div class="bar"><div class="seg" id="presets" role="group" aria-label="time range"></div>
+  <button class="act" id="back" title="move the window earlier">&#9664;</button><button class="act" id="fwd" title="move the window later">&#9654;</button>
+  <button class="act" id="reset">Reset zoom</button>
+  <label class="tg"><input type="checkbox" id="tgOut" checked> outages</label><label class="tg"><input type="checkbox" id="tgRuns" checked> launches</label><label class="tg"><input type="checkbox" id="tgRef" checked> 300 and 1,700 lines</label>
+  <span class="sp"></span><span class="dim" id="span"></span></div>
+ <div class="hint">Drag across the chart to zoom into that stretch. Mouse wheel zooms around the pointer. Double-click or Reset zoom to see everything. Click an outage in the list to jump to it.</div>
+</section>
+<section><h2>What was stored, and when the portal stopped answering</h2><div class="stats" id="stats"></div>
+ <div class="wrap" id="wrap"><svg id="svg" role="img" aria-label="Tenders stored per minute over time, with portal outages shaded and launches marked"></svg><div class="tip" id="tip" hidden></div></div>
+ <div class="lg"><span><i style="background:var(--s1);opacity:.55"></i>tenders stored per minute (all runners)</span><span><i style="background:var(--bad);opacity:.5"></i>portal down (3 or more failed checks in a row)</span><span><i style="background:var(--ok)"></i>portal check passed</span><span><i style="background:var(--bad)"></i>check failed</span></div>
+</section>
+<section><h2>Outages in view</h2><div id="outs"></div></section>
+<section><h2>Launches in view</h2><div id="runs"></div></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+async function j(u){const r=await fetch(u);if(r.status===401){location="/login";throw 0}if(!r.ok)throw new Error(u);return r.json()}
+const fmtDur=sec=>{const m=Math.round(sec/60);return m<1?"under 1 min":m<60?m+" min":Math.floor(m/60)+" h "+String(m%60).padStart(2,"0")+" min"};
+const fmtT=(t,long)=>{const d=new Date(t*1000);return d.toLocaleDateString([],{day:"numeric",month:"short"})+" "+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})};
+const fmtN=n=>Math.round(n).toLocaleString();
+const PRESETS={"3h":3*3600,"12h":12*3600,"24h":24*3600,"3d":3*86400,"All":0};
+let D=null,view=[0,0],full=[0,0],preset="All",hoverX=null,brush=null;
+const W=1000,L=52,R=12,TOP=14,H1=250,GAP=34,H2=90,HT=TOP+H1+GAP+H2+30,pw=W-L-R;
+const X=t=>L+(t-view[0])/(view[1]-view[0])*pw, TX=x=>view[0]+(x-L)/pw*(view[1]-view[0]);
+const y1=(v,mx)=>TOP+H1-v/mx*H1, y2top=TOP+H1+GAP, y2=ms=>y2top+H2-Math.min(ms,20000)/20000*H2;
+
+function bucketSize(){const r=view[1]-view[0];return Math.max(60,Math.ceil(r/300/60)*60)}
+function aggregate(){
+ const b=bucketSize(),n=Math.ceil((view[1]-view[0])/b),t0=Math.floor(view[0]/b)*b,rate=new Array(n+1).fill(0),chk=new Array(n+1).fill(null);
+ for(const [t,v] of D.rate){const i=Math.floor((t-t0)/b);if(i>=0&&i<=n)rate[i]+=v}
+ for(const [t,ok,ms] of D.checks){const i=Math.floor((t-t0)/b);if(i<0||i>n)continue;const c=chk[i]||(chk[i]={n:0,fail:0,ms:0});c.n++;if(!ok)c.fail++;else c.ms=Math.max(c.ms,ms)}
+ return {b,t0,rate:rate.map(v=>v/(b/60)),chk}
+}
+function draw(){
+ if(!D)return;const A=aggregate(),b=A.b;let mx=100;A.rate.forEach(v=>{if(v>mx)mx=v});mx=Math.max(mx*1.12,330);
+ const ticks=[0,.25,.5,.75,1].map(f=>Math.round(mx*f/50)*50);
+ let g="";
+ for(const v of ticks){g+=`<line x1="${L}" x2="${W-R}" y1="${y1(v,mx).toFixed(1)}" y2="${y1(v,mx).toFixed(1)}" stroke="var(--line)" opacity=".6"/><text x="${L-6}" y="${(y1(v,mx)+3).toFixed(1)}" text-anchor="end" class="ax">${fmtN(v)}</text>`}
+ if($("tgOut").checked)for(const o of D.outages){const a=Math.max(o.start,view[0]),e=Math.min(o.end,view[1]);if(e<=a)continue;
+  g+=`<rect x="${X(a).toFixed(1)}" y="${TOP}" width="${Math.max(1.5,X(e)-X(a)).toFixed(1)}" height="${H1}" fill="var(--bad)" opacity=".14"/><rect x="${X(a).toFixed(1)}" y="${y2top}" width="${Math.max(1.5,X(e)-X(a)).toFixed(1)}" height="${H2}" fill="var(--bad)" opacity=".14"/>`}
+ if($("tgRef").checked)for(const [v,c,l] of [[300,"var(--text)","300 minimum"],[1700,"var(--ok)","1,700 target"]])if(v<mx)g+=`<line x1="${L}" x2="${W-R}" y1="${y1(v,mx).toFixed(1)}" y2="${y1(v,mx).toFixed(1)}" stroke="${c}" stroke-dasharray="5 4" opacity=".7"/><text x="${W-R-4}" y="${(y1(v,mx)-4).toFixed(1)}" text-anchor="end" class="lab" style="fill:${c}">${l}</text>`;
+ // rate: step area
+ let pts="",first=true;for(let i=0;i<A.rate.length;i++){const ta=A.t0+i*b,tb=ta+b;if(tb<view[0]||ta>view[1])continue;const xa=Math.max(L,X(ta)),xb=Math.min(W-R,X(tb)),yy=y1(A.rate[i],mx);pts+=`${xa.toFixed(1)},${yy.toFixed(1)} ${xb.toFixed(1)},${yy.toFixed(1)} `}
+ if(pts){const arr=pts.trim().split(" "),x0=arr[0].split(",")[0],x1=arr[arr.length-1].split(",")[0];
+  g+=`<polygon points="${x0},${y1(0,mx)} ${pts}${x1},${y1(0,mx)}" fill="var(--s1)" opacity=".3"/><polyline points="${pts}" fill="none" stroke="var(--s1)" stroke-width="1.5"/>`}
+ // launches
+ if($("tgRuns").checked){let k=0;for(const r of D.runs){if(r.start<view[0]||r.start>view[1])continue;const x=X(r.start);
+  g+=`<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${TOP}" y2="${y2top+H2}" stroke="var(--dim)" stroke-dasharray="2 3"/><text x="${(x+3).toFixed(1)}" y="${TOP+9+(k%4)*11}" class="lab">${r.procs} procs</text>`;k++}}
+ g+=`<text x="${L}" y="${TOP-3}" class="ax">tenders per minute</text>`;
+ // answer time panel
+ for(const v of [0,5,10,20]){g+=`<line x1="${L}" x2="${W-R}" y1="${y2(v*1000).toFixed(1)}" y2="${y2(v*1000).toFixed(1)}" stroke="var(--line)" opacity=".6" ${v?'stroke-dasharray="2 3"':""}/><text x="${L-6}" y="${(y2(v*1000)+3).toFixed(1)}" text-anchor="end" class="ax">${v}${v===20?"+":""} s</text>`}
+ g+=`<text x="${L}" y="${y2top-8}" class="ax">portal answer time (failed checks plot at 20 s)</text>`;
+ let lp="";A.chk.forEach((c,i)=>{if(!c)return;const ta=A.t0+i*b;if(ta<view[0]-b||ta>view[1])return;const x=X(ta+b/2);const ms=c.fail===c.n?20000:c.ms;lp+=`${x.toFixed(1)},${y2(ms).toFixed(1)} `;
+  if(c.fail===c.n)g+=`<circle cx="${x.toFixed(1)}" cy="${y2(20000).toFixed(1)}" r="2" fill="var(--bad)"/>`;else if(b<=300)g+=`<circle cx="${x.toFixed(1)}" cy="${y2(ms).toFixed(1)}" r="1.4" fill="var(--ok)"/>`});
+ if(lp)g+=`<polyline points="${lp}" fill="none" stroke="var(--ok)" stroke-width="1" opacity=".7"/>`;
+ // time axis
+ const span=view[1]-view[0],cands=[300,600,900,1800,3600,7200,10800,21600,43200,86400],step=cands.find(c=>span/c<=9)||86400;
+ for(let t=Math.ceil(view[0]/step)*step;t<view[1];t+=step){const x=X(t);g+=`<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${TOP}" y2="${y2top+H2}" stroke="var(--line)" opacity=".35"/><text x="${x.toFixed(1)}" y="${HT-8}" text-anchor="middle" class="ax">${step>=86400||span>2*86400?fmtT(t):new Date(t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</text>`}
+ if(hoverX!=null)g+=`<line x1="${hoverX}" x2="${hoverX}" y1="${TOP}" y2="${y2top+H2}" stroke="var(--text)" opacity=".6"/>`;
+ if(brush)g+=`<rect x="${Math.min(brush[0],brush[1])}" y="${TOP}" width="${Math.abs(brush[1]-brush[0])}" height="${y2top+H2-TOP}" fill="var(--accent)" opacity=".18" stroke="var(--accent)"/>`;
+ g+=`<rect id="hit" x="${L}" y="${TOP}" width="${pw}" height="${y2top+H2-TOP}" fill="transparent" style="cursor:crosshair"/>`;
+ $("svg").setAttribute("viewBox",`0 0 ${W} ${HT}`);$("svg").innerHTML=g;
+ $("span").textContent=fmtT(view[0])+"  to  "+fmtT(view[1])+"   ("+fmtDur(view[1]-view[0])+", "+Math.round(b/60)+" min per bar)";
+ stats(A);lists();
+}
+function stats(A){
+ const [a,e]=view;let total=0,peak=0,peakT=0;for(const [t,v] of D.rate)if(t>=a&&t<e)total+=v;A.rate.forEach((v,i)=>{if(A.t0+i*A.b>=a-A.b&&A.t0+i*A.b<e&&v>peak){peak=v;peakT=A.t0+i*A.b}});
+ let down=0,n=0;for(const o of D.outages){const s=Math.max(o.start,a),f=Math.min(o.end,e);if(f>s){down+=f-s;n++}}
+ const avg=total/Math.max(1,(e-a)/60);let mon=0;for(const [t] of D.checks)if(t>=a&&t<e)mon++;
+ $("stats").innerHTML=`<div><b>${fmtN(total)}</b><span>tenders stored in view</span></div><div><b>${fmtN(avg)}/min</b><span>average over the whole view</span></div><div><b>${fmtN(peak)}/min</b><span>best ${Math.round(A.b/60)}-minute stretch, ${peak?fmtT(peakT):"-"}</span></div>
+ <div><b class="${down?"bad":"ok"}">${down?fmtDur(down):"none"}</b><span>${D.probe?`portal down in ${n} outage${n===1?"":"s"}${down?` (${(100*down/(e-a)).toFixed(0)}% of the view)`:""}`:"no portal check configured"}</span></div>`;
+}
+function lists(){
+ const [a,e]=view,outs=D.outages.filter(o=>o.end>a&&o.start<e).slice().reverse();
+ $("outs").innerHTML=outs.length?`<table><tr><th>From</th><th>To</th><th>Length</th></tr>${outs.map(o=>`<tr class="go" data-a="${o.start}" data-b="${o.end}" title="zoom to this outage"><td>${fmtT(o.start)}</td><td>${o.going?"<span class='bad'>ongoing</span>":fmtT(o.end)}</td><td class="${o.going?"bad":""}">${fmtDur(o.end-o.start)}</td></tr>`).join("")}</table>`:`<div class="dim">No outages in this view.</div>`;
+ const rs=D.runs.filter(r=>r.start<e&&r.stop>a);
+ $("runs").innerHTML=rs.length?`<table><tr><th>Started</th><th>Processes</th><th>Tenders reported</th><th>Ran for</th><th>Workflow run</th></tr>${rs.map(r=>`<tr class="go" data-a="${r.start}" data-b="${Math.max(r.stop,r.start+600)}" title="zoom to this run"><td>${fmtT(r.start)}</td><td>${r.procs}</td><td>${fmtN(r.records)}</td><td>${r.running?"running":fmtDur(r.stop-r.start)}</td><td class="dim">${esc(r.id)}</td></tr>`).join("")}</table>`:`<div class="dim">No launches in this view.</div>`;
+}
+function setView(a,b){const min=300;if(b-a<min){const m=(a+b)/2;a=m-min/2;b=m+min/2}view=[Math.max(a,full[0]-3600),Math.min(b,full[1]+600)];if(view[1]-view[0]<min)view=[a,b];draw()}
+function setPreset(k){preset=k;document.querySelectorAll("#presets button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.k===k));
+ const sec=PRESETS[k];view=sec?[full[1]-sec,full[1]]:[full[0],full[1]];draw()}
+function tipAt(x){
+ const t=TX(x),A=aggregate(),i=Math.floor((t-A.t0)/A.b),c=A.chk[i],r=A.rate[i]??0,run=D.runs.filter(q=>q.start<=t&&q.stop>=t);
+ const out=D.outages.find(o=>o.start<=t&&o.end>=t);
+ let state=!D.probe?"":out?`<span class="bad">portal down (outage since ${fmtT(out.start)})</span>`:c?(c.fail===c.n?`<span class="bad">checks failing</span>`:c.fail?`<span class="bad">${c.fail} of ${c.n} checks failed</span>`:`<span class="ok">portal up, ${c.ms} ms</span>`):`<span class="dim">no check</span>`;
+ return `<b>${fmtT(t)}</b>${fmtN(r)} tenders/min (${Math.round(A.b/60)}-min bar)<br>${state}${run.length?`<br><span class="dim">${run.map(q=>q.procs+" processes running").join(", ")}</span>`:`<br><span class="dim">nothing running</span>`}`}
+function svgX(ev){const r=$("svg").getBoundingClientRect();return (ev.clientX-r.left)/r.width*W}
+function wire(){
+ const s=$("svg"),tip=$("tip");
+ s.addEventListener("mousemove",ev=>{const x=svgX(ev);if(brush){brush[1]=Math.max(L,Math.min(W-R,x));draw();return}
+  if(x<L||x>W-R){hoverX=null;tip.hidden=true;draw();return}hoverX=x;tip.innerHTML=tipAt(x);tip.hidden=false;
+  const r=s.getBoundingClientRect(),px=ev.clientX-r.left;tip.style.left=Math.min(px+14,r.width-tip.offsetWidth-4)+"px";tip.style.top="30px";draw()});
+ s.addEventListener("mouseleave",()=>{hoverX=null;tip.hidden=true;if(!brush)draw()});
+ s.addEventListener("mousedown",ev=>{const x=svgX(ev);if(x>=L&&x<=W-R){brush=[x,x];tip.hidden=true}});
+ window.addEventListener("mouseup",()=>{if(!brush)return;const [a,e]=brush;brush=null;if(Math.abs(e-a)>8)setView(TX(Math.min(a,e)),TX(Math.max(a,e)));else draw()});
+ s.addEventListener("dblclick",()=>setPreset("All"));
+ s.addEventListener("wheel",ev=>{ev.preventDefault();const x=Math.max(L,Math.min(W-R,svgX(ev))),t=TX(x),f=ev.deltaY>0?1.35:1/1.35;setView(t-(t-view[0])*f,t+(view[1]-t)*f)},{passive:false});
+ $("reset").onclick=()=>setPreset("All");
+ $("back").onclick=()=>{const w=view[1]-view[0];setView(view[0]-w/2,view[1]-w/2)};$("fwd").onclick=()=>{const w=view[1]-view[0];setView(view[0]+w/2,view[1]+w/2)};
+ for(const id of ["tgOut","tgRuns","tgRef"])$(id).onchange=draw;
+ document.addEventListener("click",ev=>{const r=ev.target.closest("tr.go");if(r){const a=+r.dataset.a,b=+r.dataset.b,m=Math.max(300,(b-a)*.25);setView(a-m,b+m);window.scrollTo({top:0,behavior:"smooth"})}});
+ $("proj").onchange=()=>load($("proj").value);
+}
+async function load(project){
+ D=await j("/api/timeline?project="+encodeURIComponent(project||""));
+ $("proj").innerHTML=D.projects.map(p=>`<option ${p===D.project?"selected":""}>${esc(p)}</option>`).join("");
+ const ts=[...D.rate.map(r=>r[0]),...D.checks.map(c=>c[0]),...D.runs.map(r=>r.start)];
+ const now=Date.now()/1000;full=[ts.length?Math.min(...ts)-600:now-3600,now+300];
+ if(!$("presets").children.length){$("presets").innerHTML=Object.keys(PRESETS).map(k=>`<button data-k="${k}" aria-pressed="${k===preset}">${k}</button>`).join("");
+  $("presets").addEventListener("click",e=>{const b=e.target.closest("[data-k]");if(b)setPreset(b.dataset.k)});wire()}
+ setPreset(preset);
+}
+load("");setInterval(()=>{if(!brush&&hoverX==null)j("/api/timeline?project="+encodeURIComponent($("proj").value)).then(d=>{const keep=preset==="All"?null:view;D=d;const now=Date.now()/1000;full[1]=now+300;if(preset!=="All"&&PRESETS[preset])view=[now+300-PRESETS[preset],now+300];else if(preset==="All")view=[full[0],full[1]];else if(keep)view=keep;draw()}).catch(()=>{})},60000);
+</script></body></html>
