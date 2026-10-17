@@ -134,6 +134,12 @@ class KnownReq(BaseModel):
     ids: list[str] = Field(max_length=2000)
 
 
+class WindowReq(BaseModel):
+    org_id: str = Field(max_length=40)
+    from_date: str = Field(max_length=20)
+    to_date: str = Field(max_length=20)
+
+
 class QueueReplace(BaseModel):
     remove: list[str] = []
     add: list[QueueItem] = []
@@ -300,6 +306,19 @@ def known_records(run_id: int, body: KnownReq, request: Request, who: Caller = D
         rows = c.execute("""SELECT record_id FROM records WHERE project=%s AND record_id = ANY(%s)
                             AND coalesce(data->'details'->'fields'->>'tender_title', '') <> ''""", (run["project"], body.ids)).fetchall()
     return {"known": [r["record_id"] for r in rows]}
+
+
+@app.post("/api/v1/runs/{run_id}/window-stored")
+def window_stored(run_id: int, body: WindowReq, request: Request, who: Caller = Depends(caller)):
+    """How many tenders of one (organisation, date window) are already stored with a real title, so a runner can skip a window that is
+    already complete without listing it (listing is the slow part: one results page of 10 tenders at a time)."""
+    with db.conn() as c:
+        run = own_run(c, run_id, who)
+        seen(c, run_id, request)
+        n = c.execute("""SELECT count(*) AS n FROM records WHERE project=%s AND data->>'org_id'=%s AND data->'window'->>0=%s
+                         AND data->'window'->>1=%s AND coalesce(data->'details'->'fields'->>'tender_title', '') <> ''""",
+                      (run["project"], body.org_id, body.from_date, body.to_date)).fetchone()["n"]
+    return {"stored": n}
 
 
 PATH_RE = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")

@@ -131,3 +131,6 @@ CREATE TABLE IF NOT EXISTS probes (
     detail TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS probes_target_at ON probes (target, at);
+
+-- Lets a runner ask "how many tenders of this organisation and window are already stored?" without scanning every record.
+CREATE INDEX IF NOT EXISTS records_org_window ON records (project, (data->>'org_id'), (data->'window'->>0), (data->'window'->>1));

@@ -647,3 +647,16 @@ def test_reports_are_served_only_behind_login_and_only_by_safe_names(client, cle
     from fastapi.testclient import TestClient
     anon = TestClient(hub_app.app)                       # no login cookie
     assert anon.get("/reports/chart.png", follow_redirects=False).status_code in (302, 303, 401)
+
+
+def test_window_stored_counts_real_records_of_one_window(client, clean):
+    h = hdr()
+    rid = start(client, project="windows")
+    win = ["01/01/2019", "28/02/2019"]
+    good = lambda i, w=win, org="159": {"record_id": f"G{i}{org}{w[0]}", "data": {"org_id": org, "window": w, "details": {"fields": {"tender_title": "Road"}}}}
+    client.post(f"/api/v1/runs/{rid}/batches", headers=h, json={"records": [
+        good(1), good(2),
+        {"record_id": "E1", "data": {"org_id": "159", "window": win, "details": {"fields": {"tender_title": ""}}}},   # an empty capture does not count
+        good(3, ["01/03/2019", "30/04/2019"]), good(4, org="160")]})
+    n = client.post(f"/api/v1/runs/{rid}/window-stored", headers=h, json={"org_id": "159", "from_date": win[0], "to_date": win[1]}).json()
+    assert n == {"stored": 2}

@@ -221,6 +221,10 @@ class HubClient(_Auth):
             out += self.call("POST", f"/api/v1/runs/{self.run_id}/known-records", {"ids": list(ids[i:i + chunk])})["known"]
         return out
 
+    def window_stored(self, org_id, from_date, to_date):
+        """How many tenders of this organisation and date window the hub already holds with a real title."""
+        return self.call("POST", f"/api/v1/runs/{self.run_id}/window-stored", {"org_id": str(org_id), "from_date": from_date, "to_date": to_date})["stored"]
+
     def upload_many(self, files, attempts=3):
         """Store files in the hub's object storage. files: [(path, bytes, content_type)]; path is relative to this project.
 
