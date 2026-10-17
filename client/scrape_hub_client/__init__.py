@@ -222,6 +222,20 @@ class HubClient(_Auth):
             out += self.call("POST", f"/api/v1/runs/{self.run_id}/known-records", {"ids": list(ids[i:i + chunk])})["known"]
         return out
 
+    def backfill_todo(self, target, org_id, year, field="sections", limit=3000):
+        """Records of one organisation and year in project `target` that still lack details.<field>: [{"record_id", "pages_key"}]."""
+        return self.call("POST", f"/api/v1/runs/{self.run_id}/backfill/todo", {"target": target, "org_id": str(org_id), "year": str(year), "field": field, "limit": limit})["records"]
+
+    def read_urls(self, target, keys):
+        """Short-lived download links {key: url} for saved objects of project `target` (this repository must own it)."""
+        return self.call("POST", f"/api/v1/runs/{self.run_id}/read-urls", {"target": target, "keys": list(keys)})["urls"]
+
+    def patch_records(self, target, patches, field="sections"):
+        """Set details.<field> on existing records of `target`. patches: [(record_id, value_dict)]. Other fields are left alone."""
+        for i in range(0, len(patches), 500):
+            self.call("POST", f"/api/v1/runs/{self.run_id}/patch-records", {"target": target, "field": field,
+                      "patches": [{"record_id": r, "value": v} for r, v in patches[i:i + 500]]})
+
     def window_stored(self, org_id, from_date, to_date):
         """How many tenders of this organisation and date window the hub already holds with a real title."""
         return self.call("POST", f"/api/v1/runs/{self.run_id}/window-stored", {"org_id": str(org_id), "from_date": from_date, "to_date": to_date})["stored"]

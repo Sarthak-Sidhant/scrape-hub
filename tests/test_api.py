@@ -699,3 +699,32 @@ def test_claim_retries_failed_windows_only_when_asked_and_after_a_pause(client, 
         for _ in range(3):
             c.execute("INSERT INTO probes (target, ok, ms) VALUES ('site', false, 5)")
     assert claim(steal=True, retry_failed=True)["items"] == []
+
+
+def test_backfill_todo_read_urls_and_patch_leave_other_fields_alone(client, clean):
+    repo = "Sarthak-Sidhant/eprocure-scrape"
+    tender = start(client, project="tenders", repo=repo, run_id="1")
+    h1 = hdr(repo=repo, run_id="1")
+    rec = lambda i, extra=None: {"record_id": f"2019_X_{i}_1", "data": {"org_id": "5", "details": {"pages_key": f"tenders/pages/2019/5/2019_X_{i}_1.json.gz", "fields": {"tender_title": f"T{i}"}, **(extra or {})}}}
+    client.post(f"/api/v1/runs/{tender}/batches", headers=h1, json={"records": [rec(1), rec(2, {"sections": {"nit_documents": []}}),
+                {"record_id": "2020_X_3_1", "data": {"org_id": "5", "details": {"pages_key": "tenders/pages/2020/5/x.json.gz"}}},
+                {"record_id": "2019_X_4_1", "data": {"org_id": "6", "details": {"pages_key": "tenders/pages/2019/6/y.json.gz"}}}]})
+    back = start(client, project="backfill", repo=repo, run_id="2")
+    h2 = hdr(repo=repo, run_id="2")
+    todo = client.post(f"/api/v1/runs/{back}/backfill/todo", headers=h2, json={"target": "tenders", "org_id": "5", "year": "2019"}).json()["records"]
+    assert [r["record_id"] for r in todo] == ["2019_X_1_1"]                       # not the one that has sections, not another year or org
+    assert todo[0]["pages_key"] == "tenders/pages/2019/5/2019_X_1_1.json.gz"
+    out = client.post(f"/api/v1/runs/{back}/patch-records", headers=h2, json={"target": "tenders", "patches": [{"record_id": "2019_X_1_1", "value": {"nit_documents": [{"name": "a.pdf"}]}}]}).json()
+    assert out == {"patched": 1}
+    with db.conn() as c:
+        d = c.execute("SELECT data FROM records WHERE project='tenders' AND record_id='2019_X_1_1'").fetchone()["data"]
+        n = c.execute("SELECT records FROM runs WHERE id=%s", (back,)).fetchone()["records"]
+    assert d["details"]["sections"]["nit_documents"][0]["name"] == "a.pdf" and d["details"]["fields"]["tender_title"] == "T1" and d["org_id"] == "5"
+    assert n == 1                                                                  # the backfill's own run shows the work
+    assert client.post(f"/api/v1/runs/{back}/backfill/todo", headers=h2, json={"target": "tenders", "org_id": "5", "year": "2019"}).json()["records"] == []
+    # keys outside the target project are refused, and so is another repository
+    bad = client.post(f"/api/v1/runs/{back}/read-urls", headers=h2, json={"target": "tenders", "keys": ["other/pages/x.json.gz"]})
+    assert bad.status_code == 422
+    stranger = start(client, project="backfill2", repo="Sarthak-Sidhant/other", run_id="3")
+    assert client.post(f"/api/v1/runs/{stranger}/patch-records", headers=hdr(repo="Sarthak-Sidhant/other", run_id="3"),
+                       json={"target": "tenders", "patches": [{"record_id": "2019_X_1_1", "value": {}}]}).status_code == 403

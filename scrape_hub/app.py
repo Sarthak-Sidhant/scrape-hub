@@ -131,6 +131,30 @@ class UploadRequest(BaseModel):
     files: list[UploadFile] = Field(min_length=1, max_length=60)
 
 
+class BackfillTodo(BaseModel):
+    target: str = Field(max_length=64)
+    org_id: str = Field(max_length=40)
+    year: str = Field(pattern=r"^\d{4}$")
+    field: str = Field(default="sections", pattern=r"^[a-z_]{1,32}$")
+    limit: int = Field(default=3000, ge=1, le=5000)
+
+
+class ReadUrls(BaseModel):
+    target: str = Field(max_length=64)
+    keys: list[str] = Field(min_length=1, max_length=100)
+
+
+class PatchItem(BaseModel):
+    record_id: str = Field(max_length=200)
+    value: dict
+
+
+class PatchRecords(BaseModel):
+    target: str = Field(max_length=64)
+    field: str = Field(default="sections", pattern=r"^[a-z_]{1,32}$")
+    patches: list[PatchItem] = Field(min_length=1, max_length=500)
+
+
 class KnownReq(BaseModel):
     ids: list[str] = Field(max_length=2000)
 
@@ -322,6 +346,66 @@ def window_stored(run_id: int, body: WindowReq, request: Request, who: Caller = 
                          AND data->'window'->>1=%s AND coalesce(data->'details'->'fields'->>'tender_title', '') <> ''""",
                       (run["project"], body.org_id, body.from_date, body.to_date)).fetchone()["n"]
     return {"stored": n}
+
+
+def target_access(c, target: str, who: Caller):
+    """A run may read and annotate another project's records only if its repository is allowed to write that project."""
+    row = c.execute("SELECT allowed_repos FROM projects WHERE name=%s", (target,)).fetchone()
+    if not row or who.repository not in (row["allowed_repos"] or []):
+        raise HTTPException(403, f"{who.repository} may not use project {target}")
+
+
+@app.post("/api/v1/runs/{run_id}/backfill/todo")
+def backfill_todo(run_id: int, body: BackfillTodo, request: Request, who: Caller = Depends(caller)):
+    """Records of one organisation and year in `target` that have no `details.<field>` yet, with the key of their saved pages."""
+    with db.conn() as c:
+        own_run(c, run_id, who)
+        target_access(c, body.target, who)
+        seen(c, run_id, request)
+        rows = c.execute("""SELECT record_id, data->'details'->>'pages_key' AS pages_key FROM records
+                            WHERE project=%s AND data->>'org_id'=%s AND record_id LIKE %s
+                              AND NOT (coalesce(data->'details', '{}'::jsonb) ? %s) AND data->'details' ? 'pages_key'
+                            ORDER BY record_id LIMIT %s""",
+                         (body.target, body.org_id, body.year + "\\_%", body.field, body.limit)).fetchall()
+    return {"records": rows}
+
+
+@app.post("/api/v1/runs/{run_id}/read-urls")
+def read_urls(run_id: int, body: ReadUrls, request: Request, who: Caller = Depends(caller)):
+    """Short-lived download links for saved objects of a project this repository owns (the runner never holds the storage keys)."""
+    for k in body.keys:
+        if not k.startswith(body.target + "/") or not PATH_RE.match(k) or any(seg in (".", "..") for seg in k.split("/")):
+            raise HTTPException(422, f"bad key {k!r}: must be a path under {body.target}/")
+    with db.conn() as c:
+        own_run(c, run_id, who)
+        target_access(c, body.target, who)
+        seen(c, run_id, request)
+    if not (config.R2_BUCKET and config.R2_ENDPOINT and config.R2_ACCESS_KEY_ID):
+        raise HTTPException(503, "object storage is not configured on the hub")
+    client = s3_client()
+    return {"urls": {k: client.generate_presigned_url("get_object", Params={"Bucket": config.R2_BUCKET, "Key": k},
+                                                       ExpiresIn=config.R2_PRESIGN_SECONDS) for k in body.keys},
+            "expires_in": config.R2_PRESIGN_SECONDS}
+
+
+@app.post("/api/v1/runs/{run_id}/patch-records")
+def patch_records(run_id: int, body: PatchRecords, request: Request, who: Caller = Depends(caller)):
+    """Set `details.<field>` on existing records of `target`, leaving everything else in them untouched. Counted as this run's output
+    so a backfill shows up on the dashboard like any other run."""
+    with db.conn() as c:
+        run = own_run(c, run_id, who)
+        target_access(c, body.target, who)
+        seen(c, run_id, request)
+        with c.cursor() as cur:
+            cur.executemany(
+                """UPDATE records SET data = data || jsonb_build_object('details', coalesce(data->'details', '{}'::jsonb) || jsonb_build_object(%s::text, %s::jsonb))
+                   WHERE project=%s AND record_id=%s""",
+                [(body.field, json.dumps(p.value), body.target, p.record_id) for p in body.patches])
+            changed = cur.rowcount if cur.rowcount >= 0 else len(body.patches)
+        n = len(body.patches)
+        c.execute("INSERT INTO batches (run_id, project, records) VALUES (%s,%s,%s)", (run_id, run["project"], n))
+        c.execute("UPDATE runs SET records=records+%s, batches=batches+1, last_seen=now() WHERE id=%s", (n, run_id))
+    return {"patched": n}
 
 
 PATH_RE = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
