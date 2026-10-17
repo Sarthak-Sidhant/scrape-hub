@@ -744,3 +744,15 @@ def test_tender_lookup_finds_by_id_prefix_and_returns_sections_and_documents(cli
     assert len(both["matches"]) == 2 and both["tender"]["record_id"] == "2025_DRDO_875304_1"
     assert login.get("/api/tender?q=25").json() == {"matches": [], "tender": None}            # too short to search
     assert login.get("/api/tender?q=2025_%25").json()["matches"] == []                          # a % in the query is not a wildcard
+
+
+def test_a_capture_without_covers_is_not_a_known_tender_but_one_without_sections_still_is(client, clean):
+    h = hdr()
+    rid = start(client, project="stale")
+    win = ["01/01/2019", "28/02/2019"]
+    mk = lambda i, covers: {"record_id": f"S{i}", "data": {"org_id": "9", "window": win, "details": {"fields": {"tender_title": "Roads"}, **({} if covers is None else {"sections": {"covers": covers}})}}}
+    client.post(f"/api/v1/runs/{rid}/batches", headers=h, json={"records": [mk(1, [{"no": "1"}]), mk(2, []), mk(3, None)]})   # real, 'Stale Session' page with a title, stored before sections existed
+    known = client.post(f"/api/v1/runs/{rid}/known-records", headers=h, json={"ids": ["S1", "S2", "S3"]}).json()["known"]
+    assert known == ["S1", "S3"]
+    n = client.post(f"/api/v1/runs/{rid}/window-stored", headers=h, json={"org_id": "9", "from_date": win[0], "to_date": win[1]}).json()
+    assert n == {"stored": 2}
