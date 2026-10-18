@@ -560,7 +560,7 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
                    WHERE project=%(project)s {part}
                      AND (status='pending' OR (status='claimed' AND claimed_at < now() - make_interval(secs => %(timeout)s)))
                    ORDER BY partition_id, key LIMIT %(limit)s FOR UPDATE SKIP LOCKED)
-               RETURNING key, payload"""
+               RETURNING key, payload, attempts"""
         args = {"run": run_id, "project": body.project, "total": max(1, run["total_jobs"]), "idx": run["job_index"],
                 "timeout": config.CLAIM_TIMEOUT_S, "limit": body.limit}
         rows = c.execute(claim_sql.format(part="AND partition_id %% %(total)s = %(idx)s"), args).fetchall()
@@ -572,7 +572,7 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
                    WHERE project=%(project)s AND status='failed' AND attempts < %(max)s
                      AND claimed_at < now() - make_interval(secs => %(after)s)
                    ORDER BY claimed_at, key LIMIT %(limit)s FOR UPDATE SKIP LOCKED)
-               RETURNING key, payload"""
+               RETURNING key, payload, attempts"""
         if not rows and body.steal and body.retry_failed and not settings["throttled"]:
             # every window has been tried once: try the failed ones again, but not while the target is down or being throttled
             rows = c.execute(retry_sql, {**args, "max": RETRY_MAX_ATTEMPTS, "after": RETRY_AFTER_S}).fetchall()
@@ -582,7 +582,7 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
         retry = c.execute("SELECT count(*) AS n FROM queue WHERE project=%s AND status='failed' AND attempts < %s",
                           (body.project, RETRY_MAX_ATTEMPTS)).fetchone()["n"]
         c.execute("UPDATE runs SET last_seen=now() WHERE id=%s", (run_id,))
-    return {"items": [{"key": r["key"], "payload": r["payload"]} for r in rows], "settings": settings,
+    return {"items": [{"key": r["key"], "payload": r["payload"], "attempts": r["attempts"]} for r in rows], "settings": settings,
             "queue": {"pending": counts.get("pending", 0), "claimed": counts.get("claimed", 0), "retry": retry}}
 
 
