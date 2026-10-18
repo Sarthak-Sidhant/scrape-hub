@@ -155,3 +155,16 @@ CREATE TABLE IF NOT EXISTS showcase (
     built_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     data     JSONB NOT NULL
 );
+
+-- Every automatic speed change (settings.adaptive): what the runners measured and what the threads became.
+CREATE TABLE IF NOT EXISTS adjustments (
+    project      TEXT NOT NULL,
+    at           TIMESTAMPTZ NOT NULL DEFAULT now(),
+    s_per_req    DOUBLE PRECISION,
+    requests     INT NOT NULL DEFAULT 0,
+    errors       INT NOT NULL DEFAULT 0,
+    threads_from INT NOT NULL,
+    threads_to   INT NOT NULL,
+    reason       TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS adjustments_project_at ON adjustments (project, at);

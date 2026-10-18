@@ -166,7 +166,9 @@ function speedHtml(id,d){
  const thr=ef.throttled?`<div class="thr">Auto-throttled: ${esc(ef.reason||"the target is pushing back")}. Saved speed is ${sv.threads} threads; it returns when things calm down.</div>`:"";
  return `<div class="speed"><div class="sr"><span class="sl">Speed</span><div class="seg" role="group" aria-label="runner speed">${btns}<button class="pause" data-pause="${pid}" aria-pressed="${!!sv.paused}">${sv.paused?"Resume":"Pause"}</button></div>
   <label title="When more than 10% of work is blocked, or eprocure sends several 429/403/503 responses, halve the threads and add a delay until it calms down."><input type="checkbox" data-auto="${pid}" ${sv.auto_backoff?"checked":""}> auto-backoff</label></div>
-  <div class="eff">${eff} <span>Applies to every runner within about 30 seconds. Faster means more load on eprocure.</span></div>${thr}</div>`}
+  <div class="eff">${eff} <span>Applies to every runner within about 30 seconds. Faster means more load on the portal.</span></div>${thr}${adaptHtml(d)}</div>`}
+function adaptHtml(d){const a=(d.settings||{}).adaptive;if(!a||a.on===false)return"";const last=(d.adjustments||[])[0];
+ return `<div class="eff"><b>Automatic throttle on</b>: aims for ${a.target_s??1.5} s per request, between ${(d.settings||{}).min_threads||1} and ${a.max_threads??16} threads.${last?` Last change ${ago(last.at)} ago: ${last.threads_from} → ${last.threads_to} threads (${esc(last.reason)}).`:" No change yet."}</div>`}
 async function saveSpeed(id,patch){
  const sv=(window.__det[id]||{}).settings||{threads:4,delay_ms:0,paused:false,auto_backoff:true};
  const body={threads:sv.threads,delay_ms:sv.delay_ms,paused:sv.paused,auto_backoff:sv.auto_backoff,...patch};

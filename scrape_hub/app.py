@@ -22,10 +22,53 @@ def _iso(v):
 WEB = Path(__file__).resolve().parent.parent / "web"
 
 
+def adapt_speeds(c):
+    """The automatic throttle for projects with settings.adaptive = {"target_s": 1.5, "max_threads": 16}: once a minute, from what the
+    runners measured in the last 3 minutes, halve the threads if the target answers slower than twice the target (or drops many
+    connections), take one off above the target, add one well below it. Never below min_threads (default 1) or above max_threads.
+    Only one hub worker acts per minute (advisory lock plus the time of the last change), and every change is logged in `adjustments`."""
+    if not c.execute("SELECT pg_try_advisory_xact_lock(748211) AS ok").fetchone()["ok"]:
+        return
+    for p in c.execute("SELECT name, settings FROM projects WHERE settings ? 'adaptive' AND NOT coalesce((settings->>'paused')::boolean, false)").fetchall():
+        st, ad = p["settings"], p["settings"].get("adaptive") or {}
+        if not ad.get("on", True):
+            continue
+        last = st.get("adaptive_at")
+        if last and time.time() - float(last) < 55:
+            continue
+        m = c.execute("""SELECT coalesce(sum(value) FILTER (WHERE name='n_http'), 0) AS n, coalesce(sum(value) FILTER (WHERE name='t_http_s'), 0) AS t,
+                                coalesce(sum(value) FILTER (WHERE name='http_error'), 0) AS e
+                         FROM metrics WHERE project=%s AND name IN ('n_http', 't_http_s', 'http_error') AND at > now() - interval '3 minutes'""",
+                      (p["name"],)).fetchone()
+        n, t, e = float(m["n"]), float(m["t"]), float(m["e"])
+        if n < 30:      # too little traffic to judge (starting up, holding, or idle): leave it
+            continue
+        target, cur = float(ad.get("target_s", 1.5)), int(st.get("threads", 4))
+        lo, hi, sec = max(1, int(st.get("min_threads") or 1)), int(ad.get("max_threads", 16)), t / n
+        if sec > 2 * target or e > 0.05 * n:
+            new, why = max(lo, cur // 2), f"{sec:.1f} s per request{f', {int(e)} dropped' if e else ''}: halve"
+        elif sec > target:
+            new, why = max(lo, cur - 1), f"{sec:.1f} s per request, above {target} s: one fewer"
+        elif sec < 0.7 * target:
+            new, why = min(hi, cur + 1), f"{sec:.1f} s per request, well under {target} s: one more"
+        else:
+            new, why = cur, f"{sec:.1f} s per request: holding"
+        c.execute("UPDATE projects SET settings = settings || jsonb_build_object('threads', %s::int, 'adaptive_at', %s::float8) WHERE name=%s",
+                  (new, time.time(), p["name"]))
+        if new != cur:
+            c.execute("""INSERT INTO adjustments (project, s_per_req, requests, errors, threads_from, threads_to, reason) VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                      (p["name"], sec, int(n), int(e), cur, new, why))
+
+
 def janitor():
-    """Mark long-silent runs as lost."""
+    """Mark long-silent runs as lost, and run the automatic throttle."""
     while True:
         time.sleep(60)
+        try:
+            with db.conn() as c:
+                adapt_speeds(c)
+        except Exception as e:
+            print("throttle error:", e, flush=True)
         try:
             with db.conn() as c:
                 c.execute(
@@ -752,13 +795,14 @@ def project_detail(name: str):
                FROM metrics WHERE project=%s AND at > now() - interval '1 hour' GROUP BY name ORDER BY name""", (name,)).fetchall()
         fresh = c.execute("SELECT max(scraped_at) AS newest, count(*) AS n FROM records WHERE project=%s", (name,)).fetchone()
         effective = effective_settings(c, name)
+        adj = c.execute("SELECT at, s_per_req, requests, threads_from, threads_to, reason FROM adjustments WHERE project=%s ORDER BY at DESC LIMIT 10", (name,)).fetchall()
         fsum = failure_summary(c, name)
         stats = project_stats(c, name)
         prog = progress(c, name, stats)
     return JSONResponse(json.loads(json.dumps({"project": meta, "failed": failed, "inflight": inflight, "metrics": mets,
                                                "newest_record": fresh["newest"], "records": fresh["n"],
                                                "effective": effective, "settings": {**DEFAULT_SETTINGS, **(meta.get("settings") or {})},
-                                               "max_threads": config.MAX_THREADS, "failures": fsum, **prog}, default=_iso)))
+                                               "max_threads": config.MAX_THREADS, "failures": fsum, "adjustments": adj, **prog}, default=_iso)))
 
 
 @app.post("/api/projects/{name}/settings", dependencies=[Depends(need_login)])

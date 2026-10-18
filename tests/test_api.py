@@ -783,3 +783,30 @@ def test_retry_after_s_setting_hands_failed_items_out_at_once(client, clean):
     with db.conn() as c:
         c.execute("""UPDATE projects SET settings = '{"retry_after_s": 0}' WHERE name='fastretry'""")
     assert [i["key"] for i in again()] == ["k1"]
+
+
+def test_adaptive_throttle_follows_the_measured_answer_time(client, clean):
+    from scrape_hub.app import adapt_speeds
+    rid = start(client, project="adapt")
+    def measure(n, secs, errors=0):
+        with db.conn() as c:
+            c.execute("DELETE FROM metrics")
+            c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,'adapt','n_http',%s), (%s,'adapt','t_http_s',%s), (%s,'adapt','http_error',%s)",
+                      (rid, n, rid, n * secs, rid, errors))
+            c.execute("UPDATE projects SET settings = settings - 'adaptive_at'")
+        with db.conn() as c:
+            adapt_speeds(c)
+        with db.conn() as c:
+            return c.execute("SELECT (settings->>'threads')::int AS t FROM projects WHERE name='adapt'").fetchone()["t"]
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"threads": 4, "min_threads": 2, "adaptive": {"target_s": 1.5, "max_threads": 6}}' WHERE name='adapt'""")
+    assert measure(200, 0.5) == 5                 # quick: one more
+    assert measure(200, 0.5) == 6
+    assert measure(200, 0.5) == 6                 # capped at max_threads
+    assert measure(200, 2.0) == 5                 # above target: one fewer
+    assert measure(200, 4.0) == 2                 # over twice the target: halve, not below min_threads
+    assert measure(10, 9.0) == 2                  # too few requests to judge: unchanged
+    assert measure(200, 0.5, errors=40) == 2      # many dropped connections: halve (already at the floor)
+    with db.conn() as c:
+        rows = c.execute("SELECT threads_from, threads_to FROM adjustments WHERE project='adapt' ORDER BY at").fetchall()
+    assert [(r["threads_from"], r["threads_to"]) for r in rows] == [(4, 5), (5, 6), (6, 5), (5, 2)]
