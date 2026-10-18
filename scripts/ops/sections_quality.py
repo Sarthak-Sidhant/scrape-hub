@@ -1,0 +1,11 @@
+import os, psycopg
+c = psycopg.connect(os.environ["DATABASE_URL"])
+q = lambda s: c.execute(s).fetchall()
+print("records:", q("select count(*), count(*) filter (where data->'details' ? 'sections'), count(*) filter (where coalesce(data->'details'->'fields'->>'tender_title','')<>'' and not (data->'details' ? 'sections')), count(*) filter (where coalesce(data->'details'->'fields'->>'tender_title','')='' ) from records where project='eprocure-tenders'")[0], "(total, with sections, titled but without, empty-title)")
+print("sections with no NIT docs and no work-item docs:", q("""select count(*) from records where project='eprocure-tenders' and data->'details' ? 'sections' and jsonb_array_length(data->'details'->'sections'->'nit_documents')=0 and jsonb_array_length(data->'details'->'sections'->'work_item_documents')=0""")[0][0])
+print("documents listed on the page (NIT + work item):", q("""select sum(jsonb_array_length(data->'details'->'sections'->'nit_documents')), sum(jsonb_array_length(data->'details'->'sections'->'work_item_documents')) from records where project='eprocure-tenders' and data->'details' ? 'sections'""")[0])
+print("size missing:", q("""select count(*) from records r, jsonb_array_elements(r.data->'details'->'sections'->'nit_documents') d where r.project='eprocure-tenders' and r.data->'details' ? 'sections' and (d->>'size_kb') is null""")[0][0])
+print("by year, tenders with 0 listed docs:", q("""select left(record_id,4), count(*) from records where project='eprocure-tenders' and data->'details' ? 'sections' and jsonb_array_length(data->'details'->'sections'->'nit_documents')=0 group by 1 order by 1"""))
+print("sections_error present:", q("select count(*) from records where project='eprocure-tenders' and data->'details' ? 'sections_error'")[0][0])
+print("fields intact (patched records keep their title):", q("select count(*) from records where project='eprocure-tenders' and data->'details' ? 'sections' and coalesce(data->'details'->'fields'->>'tender_title','')=''")[0][0], "patched records with empty title (the earlier outage captures)")
+print("failures table sections:", q("select count(*) from failures where project='eprocure-sections'")[0][0], "| run errors:", q("select coalesce(sum(errors),0), coalesce(sum(records),0) from runs where project='eprocure-sections'")[0])

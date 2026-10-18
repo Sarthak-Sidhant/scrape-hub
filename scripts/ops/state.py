@@ -1,0 +1,10 @@
+import os, psycopg
+c = psycopg.connect(os.environ["DATABASE_URL"])
+q = lambda s: c.execute(s).fetchall()
+print("records:", q("select count(*), count(*) filter (where coalesce(data->'details'->'fields'->>'tender_title','')<>''), count(*) filter (where data->'details' ? 'sections') from records where project='eprocure-tenders'")[0])
+print("queue tenders:", q("select status,count(*) from queue where project='eprocure-tenders' group by 1 order by 1"))
+print("queue sections:", q("select status,count(*) from queue where project='eprocure-sections' group by 1 order by 1"))
+print("settings:", q("select name, settings from projects where name in ('eprocure-tenders','eprocure-sections')"))
+print("running:", q("select project, count(*) from runs where state='running' group by 1"))
+print("probe now:", q("select at, ok, ms from probes order by at desc limit 1"), "| 24h:", q("select count(*) filter (where ok), count(*) from probes where at>now()-interval '24 hours'")[0])
+print("failures:", q("select project, kind, count(*) from failures group by 1,2 order by 3 desc limit 6"))
