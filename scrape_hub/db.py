@@ -32,4 +32,6 @@ def conn():
 def init_schema():
     sql = (Path(__file__).parent / "schema.sql").read_text()
     with conn() as c:
+        # serialise concurrent worker startups (parallel DDL deadlocks at boot)
+        c.execute("SELECT pg_advisory_xact_lock(748210)")
         c.execute(sql)
