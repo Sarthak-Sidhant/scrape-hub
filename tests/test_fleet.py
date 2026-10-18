@@ -108,3 +108,19 @@ def test_fleet_shows_counting_and_scraping_progress_per_portal(client, clean, lo
     assert sk["count_done"] == 1 and sk["count_open"] == 1 and sk["counted"] == 96
     assert wb["windows_done"] == 1 and wb["windows_open"] == 1 and wb["tenders_expected"] == 1500 and wb["tenders_fetched"] == 990
     assert by["tntenders.gov.in"]["progress"] is None and by["eprocure.gov.in"]["progress"] is None
+
+
+def test_archive_exports_whole_old_days_and_keeps_recent_rows(client, clean):
+    import gzip, importlib.util, os, psycopg
+    spec = importlib.util.spec_from_file_location("archive_telemetry", os.path.join(os.path.dirname(__file__), "..", "scripts", "archive_telemetry.py"))
+    arch = importlib.util.module_from_spec(spec); spec.loader.exec_module(arch)
+    with db.conn() as c:
+        c.execute("""INSERT INTO probes (target, at, ok, ms) VALUES ('gepnic:a', '2026-01-02 10:00+00', true, 300), ('gepnic:a', '2026-01-02 23:59+00', false, 20000),
+                     ('gepnic:a', '2026-01-03 00:01+00', true, 250), ('gepnic:a', now(), true, 200)""")
+    with psycopg.connect(os.environ["DATABASE_URL"]) as c:
+        c.execute("SET TIME ZONE 'UTC'")
+        days = arch.days_to_move(c, "probes", 30)
+        assert [d.isoformat() for d in days] == ["2026-01-02", "2026-01-03"]          # today's row stays
+        data, n = arch.export_day(c, "probes", days[0])
+        text = gzip.decompress(data).decode()
+        assert n == 2 and text.splitlines()[0] == "target,at,ok,ms,detail" and text.count("gepnic:a") == 2

@@ -91,6 +91,7 @@ function minis(d){
   for(const [k,label,color] of [["night","Indian night","--s1"],["day","Indian daytime","--s2"]]){const c=s.capacity[k];if(!c||!c.steps||!c.steps.length)continue;
    const by=new Map(c.steps.map(x=>[String(x.workers),x]));ser.push({label:label+" ("+ago(c.at)+" ago)",color,values:labels.map(l=>by.has(l)&&by.get(l).med_ms!=null?by.get(l).med_ms:null)})}
   if(!ser.length){document.getElementById("m"+i).innerHTML='<span class="dim">skipped (our runners were busy there)</span>';return}
+  if(ser.every(x=>x.values.every(v=>v==null))){document.getElementById("m"+i).innerHTML='<p class="dim">Not answering during the latest ramp, so there is no answer time to plot.</p>';return}
   Hub.lines(document.getElementById("m"+i),{labels,series:ser,height:150,yFmt:v=>Math.round(v)+" ms",aria:"answer time by parallel workers",
    tipExtra:k=>{const out=[];for(const [kk,lab] of [["night","night"],["day","day"]]){const st=(s.capacity[kk]?.steps||[]).find(x=>String(x.workers)===labels[k]);if(st)out.push(`${lab}: ${st.rps} req/s, ${st.fail} failed${st.stopped?" (stopped here)":""}`)}return out}})})}
 async function tick(){

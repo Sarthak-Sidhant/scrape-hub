@@ -7,6 +7,7 @@ Run once a minute by the scrape-hub-probe systemd timer, with the hub's environm
   application, not just the static front page that still answers when the app is stuck).
 - Every portal in data/gepnic_portals.json, as target "gepnic:<portal>", for the /portals page (set PROBE_FLEET=0 to skip). They are checked
   in parallel so the whole fleet takes about as long as the slowest portal.
+Old checks are never deleted here: scripts/archive_telemetry.py moves them to object storage after 30 days.
 """
 import concurrent.futures as cf
 import os
@@ -49,7 +50,6 @@ def main():
     with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as c:
         with c.cursor() as cur:
             cur.executemany("INSERT INTO probes (target, ok, ms, detail) VALUES (%s, %s, %s, %s)", results)
-        c.execute("DELETE FROM probes WHERE at < now() - interval '14 days'")
     down = sorted(n for n, ok, _, _ in results if not ok)
     print(f"{len(results) - len(down)}/{len(results)} up" + (f"; down: {', '.join(down)}" if down else ""))
 

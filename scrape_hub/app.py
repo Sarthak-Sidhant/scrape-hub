@@ -23,7 +23,7 @@ WEB = Path(__file__).resolve().parent.parent / "web"
 
 
 def janitor():
-    """Mark long-silent runs as lost and prune old raw batch rows."""
+    """Mark long-silent runs as lost."""
     while True:
         time.sleep(60)
         try:
@@ -33,8 +33,7 @@ def janitor():
                     "WHERE state='running' AND last_seen < now() - make_interval(secs => %s)",
                     (config.STALL_AFTER_S * 6,),
                 )
-                c.execute("DELETE FROM batches WHERE at < now() - make_interval(days => %s)", (config.BATCH_RETENTION_DAYS,))
-                c.execute("DELETE FROM metrics WHERE at < now() - make_interval(days => %s)", (config.BATCH_RETENTION_DAYS,))
+                # old batches and metrics are not deleted here: scripts/archive_telemetry.py moves them to object storage nightly
         except Exception as e:  # keep the thread alive; the next pass retries
             print("janitor error:", e, flush=True)
 
