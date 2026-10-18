@@ -586,6 +586,8 @@ def test_runners_hold_while_the_target_is_down_and_resume_when_it_answers(client
     eff = beat()
     assert eff["paused"] is True and "not responding" in eff["reason"]
     probe(True)
+    assert beat()["paused"] is True                       # one lucky answer is not a recovery
+    probe(True)
     assert beat()["paused"] is False and beat()["threads"] == 8
     # the slider keeps the probe setting
     login.post("/api/projects/flaky/settings", json={"threads": 5, "delay_ms": 0, "auto_backoff": True})
@@ -595,7 +597,7 @@ def test_runners_hold_while_the_target_is_down_and_resume_when_it_answers(client
     assert pr["target"] == "site" and pr["ok"] is False and pr["since"]
 
 
-def test_min_threads_floor_keeps_runners_going_under_backoff_and_outage(client, clean, login):
+def test_min_threads_floor_holds_under_backoff_but_not_through_an_outage(client, clean, login):
     h = hdr()
     rid = start(client, project="floored")
     login.post("/api/projects/floored/settings", json={"threads": 32, "delay_ms": 0, "auto_backoff": True})
@@ -609,7 +611,7 @@ def test_min_threads_floor_keeps_runners_going_under_backoff_and_outage(client, 
         for _ in range(3):
             c.execute("INSERT INTO probes (target, ok, ms) VALUES ('site', false, 5)")
     eff = beat()
-    assert eff["paused"] is False and eff["threads"] == 20
+    assert eff["paused"] is True                          # the floor never keeps runners on a portal that is down
     # a manual pause from the dashboard is still honoured
     login.post("/api/projects/floored/settings", json={"threads": 32, "delay_ms": 0, "auto_backoff": True, "paused": True})
     assert beat()["paused"] is True
@@ -828,3 +830,18 @@ def test_adaptive_throttle_acts_once_a_minute_and_logs(client, clean):
         adapt_speeds(c, now=datetime.datetime(2026, 10, 19, 9, 0, tzinfo=ist))   # morning: straight down to the day ceilings
         st = c.execute("SELECT settings FROM projects WHERE name='adapt'").fetchone()["settings"]
     assert (st["threads"], st["max_claimed"]) == (6, 10) and st["adaptive_phase"] == "day"
+
+
+def test_throttle_resets_a_down_portal_to_the_bottom(client, clean):
+    import datetime
+    from scrape_hub.app import adapt_speeds
+    start(client, project="downsite")
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"probe": "site", "threads": 9, "max_claimed": 14, "adaptive": {"max_windows": 20}}' WHERE name='downsite'""")
+        for _ in range(3):
+            c.execute("INSERT INTO probes (target, ok, ms) VALUES ('site', false, 20000)")
+    with db.conn() as c:
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 19, 2, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
+        st = c.execute("SELECT settings FROM projects WHERE name='downsite'").fetchone()["settings"]
+        why = c.execute("SELECT reason FROM adjustments").fetchone()["reason"]
+    assert (st["threads"], st["max_claimed"]) == (1, 1) and "is down" in why

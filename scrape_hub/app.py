@@ -77,6 +77,15 @@ def adapt_speeds(c, now=None):
         last = st.get("adaptive_at")
         if last and now.timestamp() - float(last) < 55:
             continue
+        if st.get("probe") and target_down(c, st["probe"]):
+            # the portal is down: runners hold (effective_settings); when it is back, start again from the bottom
+            threads, windows = int(st.get("threads", 4)), int(st.get("max_claimed") or 1)
+            c.execute("""UPDATE projects SET settings = settings || jsonb_build_object('threads', 1, 'max_claimed', 1, 'adaptive_at', %s::float8,
+                                                                                       'adaptive_phase', %s::text) WHERE name=%s""", (now.timestamp(), phase, p["name"]))
+            if (threads, windows) != (1, 1):
+                c.execute("""INSERT INTO adjustments (project, threads_from, threads_to, claimed_from, claimed_to, phase, reason)
+                             VALUES (%s,%s,1,%s,1,%s,%s)""", (p["name"], threads, windows, phase, f"{phase}: {st['probe']} is down: everything holds; restart from 1 thread, 1 window"))
+            continue
         m = c.execute("""SELECT coalesce(sum(value) FILTER (WHERE name='n_http'), 0) AS n, coalesce(sum(value) FILTER (WHERE name='t_http_s'), 0) AS t,
                                 coalesce(sum(value) FILTER (WHERE name='http_error'), 0) AS e
                          FROM metrics WHERE project=%s AND name IN ('n_http', 't_http_s', 'http_error') AND at > now() - interval '3 minutes'""",
@@ -272,12 +281,13 @@ PROBE_FAILS_TO_PAUSE = 3      # consecutive failed checks (one a minute) before 
 
 
 def target_down(c, target: str) -> str:
-    """'' while the target looks reachable; otherwise why runners should hold. Only the newest checks count, so a recovery
-    resumes the runners within a minute or two."""
-    rows = c.execute("SELECT ok, at FROM probes WHERE target=%s AND at > now() - interval '10 minutes' ORDER BY at DESC LIMIT %s",
-                     (target, PROBE_FAILS_TO_PAUSE)).fetchall()
-    if len(rows) >= PROBE_FAILS_TO_PAUSE and not any(r["ok"] for r in rows):
-        return f"{target} is not responding ({PROBE_FAILS_TO_PAUSE} checks in a row failed); runners are holding until it answers"
+    """'' while the target looks reachable; otherwise why runners should hold. Down: 3 or more of its last 5 checks (within 10 minutes)
+    failed. Back up: only once the 2 newest checks both passed, so one lucky answer in the middle of an outage does not restart everything."""
+    rows = c.execute("SELECT ok FROM probes WHERE target=%s AND at > now() - interval '10 minutes' ORDER BY at DESC LIMIT 5", (target,)).fetchall()
+    if len(rows) >= 2 and rows[0]["ok"] and rows[1]["ok"]:
+        return ""
+    if sum(1 for r in rows if not r["ok"]) >= PROBE_FAILS_TO_PAUSE:
+        return f"{target} is not responding ({PROBE_FAILS_TO_PAUSE} of its last checks failed); runners are holding until it answers twice in a row"
     return ""
 
 
@@ -293,9 +303,7 @@ def effective_settings(c, project: str) -> dict:
     floor = max(0, int(saved.get("min_threads") or 0))      # the slowest the throttles may make a process, so the rate never collapses
     if saved.get("probe") and not saved["paused"]:
         down = target_down(c, saved["probe"])
-        if down and floor:
-            eff.update(threads=min(saved["threads"], floor), throttled=True, reason=down.replace("runners are holding until it answers", f"running at the minimum of {floor} threads"))
-        elif down:
+        if down:      # a portal that is down gets nothing at all, whatever floor is set; the throttle restarts it from 1 thread and 1 window
             eff.update(paused=True, throttled=True, reason=down)
     if saved["auto_backoff"] and not saved["paused"]:
         w = c.execute("""SELECT coalesce(sum(blocked),0) AS b, coalesce(sum(records),0) AS r FROM batches
