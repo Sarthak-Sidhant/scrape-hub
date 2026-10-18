@@ -553,6 +553,14 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
         if settings["paused"]:
             c.execute("UPDATE runs SET last_seen=now() WHERE id=%s", (run_id,))
             return {"items": [], "settings": settings}
+        cap = int(settings.get("max_claimed") or 0)
+        if cap:   # at most this many items of the project in flight at once, however many runners ask (protects a struggling target)
+            busy = c.execute("SELECT count(*) AS n FROM queue WHERE project=%s AND status='claimed' AND claimed_at > now() - make_interval(secs => %s)",
+                             (body.project, config.CLAIM_TIMEOUT_S)).fetchone()["n"]
+            if busy >= cap:
+                c.execute("UPDATE runs SET last_seen=now() WHERE id=%s", (run_id,))
+                return {"items": [], "settings": settings, "queue": {"pending": 1, "claimed": busy, "retry": 0}}
+            body.limit = min(body.limit, cap - busy)
         claim_sql = """UPDATE queue SET status='claimed', claimed_by=%(run)s, claimed_at=now(), attempts=attempts+1
                WHERE (project, key) IN (
                    SELECT project, key FROM queue

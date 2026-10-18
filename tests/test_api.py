@@ -756,3 +756,17 @@ def test_a_capture_without_covers_is_not_a_known_tender_but_one_without_sections
     assert known == ["S1", "S3"]
     n = client.post(f"/api/v1/runs/{rid}/window-stored", headers=h, json={"org_id": "9", "from_date": win[0], "to_date": win[1]}).json()
     assert n == {"stored": 2}
+
+
+def test_max_claimed_caps_items_in_flight_for_a_project(client, clean):
+    h = hdr()
+    client.post("/api/v1/projects/capped/queue", headers=h, json={"items": [{"key": f"k{i}", "partition_id": 0} for i in range(5)]})
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"max_claimed": 2}' WHERE name='capped'""")
+    r1, r2 = start(client, project="capped"), start(client, project="capped", job_index=1)
+    a = client.post(f"/api/v1/runs/{r1}/claim", headers=h, json={"project": "capped", "limit": 5, "steal": True}).json()
+    assert len(a["items"]) == 2                                            # trimmed to the cap
+    b = client.post(f"/api/v1/runs/{r2}/claim", headers=h, json={"project": "capped", "limit": 1, "steal": True}).json()
+    assert b["items"] == [] and b["queue"]["pending"] >= 1                 # nothing more until one finishes, and the runner keeps waiting
+    client.post(f"/api/v1/runs/{r1}/complete", headers=h, json={"keys": [a["items"][0]["key"]]})
+    assert len(client.post(f"/api/v1/runs/{r2}/claim", headers=h, json={"project": "capped", "limit": 1, "steal": True}).json()["items"]) == 1
