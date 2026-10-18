@@ -22,6 +22,6 @@ sudo -u scrapehub bash -c 'set -a; . /etc/scrape-hub/env; set +a; cd /opt/scrape
 | `seed_sections_backfill.py` | Creates the `eprocure-sections` project and one queue item per (year, organisation) |
 | `reseed_incomplete_sections.py` | Puts org-years that still have tenders without sections back to pending |
 | `reset_windows_with_stale_pages.py` | Puts windows holding "session expired" / "Stale Session" captures back to pending |
-| `set_threads.py <n>` | Sets the speed (threads per process) in the project settings. Edit the project name inside first |
+| `set_threads.py <n>` | Sets the speed (threads per process) for `eprocure-tenders` (edit the name inside for another project) |
 
 Always read a script before running it: some of them change the queue or settings.
