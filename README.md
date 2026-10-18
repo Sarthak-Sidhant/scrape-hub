@@ -20,19 +20,35 @@ repo, and reports in.
 
 ## Dashboard
 
-Sign in with the same password as `status.s1d.me` (`STATUS_PASSWORD_FILE`). Per project: records fetched vs expected, ETA from the
-recent rate, queue progress, a tile per runner slice, scraper metrics, failed targets with their error and a retry button, and
-in-flight targets. Across projects: records/minute chart, live runner rows (what each is doing, API-seen and runner-reported IP),
-repositories, IP history. Health rules are in `scrape_hub/health.py`.
+Sign in with the same password as `status.s1d.me` (`STATUS_PASSWORD_FILE`). Every page shares one navigation bar.
+
+| Page | What it shows |
+|---|---|
+| `/` Overview | Per project: records vs expected, ETA, queue progress, a tile per runner slice, the speed control, metrics, failures (CSV export), the target's reachability. Across projects: records/minute, live runners, run history, repositories, runner IPs. Finished projects can be archived (hidden, never deleted). Health rules: `scrape_hub/health.py` |
+| `/portals` | Every GePNIC portal (`data/gepnic_portals.json`): which server it runs on, its share of all tenders (treemap), whether it answers now, the last 24 hours minute by minute, and how many parallel workers its server takes in the Indian night and daytime |
+| `/data` | What the scraped eprocure tenders say: per year and stage, monthly seasonality, single-bid share, bids per tender, tender size, time to award, category mix, biggest buyers, most frequent winners, documents the portal refuses |
+| `/explore` | Zoomable records-per-minute and outage chart over 7 days |
+| `/tender` | Look up one stored tender with its documents |
+
+Background jobs (systemd timers, all as the `scrapehub` user):
+
+| Timer | Does |
+|---|---|
+| `scrape-hub-probe` (every minute) | `scripts/probe.py`: checks the runner targets (`PROBE_TARGETS`, used for the runners' auto-hold) and every portal in the registry (`gepnic:<portal>`) |
+| `scrape-hub-ramp` (03:45 and 15:15 IST) | `scripts/ramp.py`: raises 1, 4, 8, 16 parallel workers per portal server and records where it slows down (table `capacity`); skips servers our runners are scraping |
+| `scrape-hub-showcase` (05:00) | rebuilds `eprocure.tender_index`, `eprocure.tender_facts` (`scripts/ops/*.sql`, as postgres) and the `/data` numbers (`scripts/build_showcase.py`, table `showcase`) |
+| `scrape-hub-backup` (03:30) | `pg_dump` to object storage |
 
 ## Layout
 
 | Path | What |
 |---|---|
-| `scrape_hub/` | FastAPI app, schema, OIDC auth, health rules |
-| `web/` | dashboard and login pages (no build step) |
+| `scrape_hub/` | FastAPI app, schema, OIDC auth, health rules, `fleet.py` (portal registry, checks, ramp verdicts) |
+| `web/` | dashboard pages (no build step); `web/assets/` holds the shared stylesheet and the small SVG chart kit |
+| `data/gepnic_portals.json` | the portal registry: URL, server IP, kind, tender count per portal |
+| `scripts/` | `probe.py`, `ramp.py`, `build_showcase.py`, `backup_db.py`; `scripts/ops/` holds operator scripts and the index/facts SQL |
 | `client/` | installable client library (`scrape-hub-client`) |
-| `deploy/` | systemd unit and env template |
+| `deploy/` | systemd units and timers, env template |
 | `scripts/dev.py`, `scripts/demo_data.py` | local hub with embedded Postgres, and synthetic activity to review the UI |
 | `tests/` | API, auth and health tests (embedded Postgres) |
 
@@ -41,7 +57,9 @@ repositories, IP history. Health rules are in `scrape_hub/health.py`.
 1. Postgres: `CREATE USER scrape_hub ...; CREATE DATABASE scrape_hub OWNER scrape_hub;`
 2. Clone to `/opt/scrape-hub`, `python3 -m venv .venv && .venv/bin/pip install fastapi "uvicorn[standard]" "psycopg[binary,pool]" pyjwt cryptography`
 3. Copy `deploy/env.example` to `/etc/scrape-hub/env` and fill it in; install `deploy/scrape-hub.service`; `systemctl enable --now scrape-hub`.
-   The schema migrates itself on start.
+   The schema migrates itself on start. Install and enable the timers in `deploy/` (probe, ramp, showcase, backup).
+   Update an existing install: run the tests, then `sudo rsync -a --exclude .venv --exclude .git --exclude .devdata --exclude tests --exclude .pytest_cache --exclude web/reports ./ /opt/scrape-hub/`,
+   `sudo chown -R scrapehub: /opt/scrape-hub/{scrape_hub,web,client,data,scripts}`, `sudo systemctl restart scrape-hub`.
 4. Route `scrape.s1d.me` to `127.0.0.1:8787` (Cloudflare Tunnel). Do not put Cloudflare Access in front: runners cannot pass it and the
    dashboard has its own password.
 

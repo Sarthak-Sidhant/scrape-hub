@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
-from . import config, dash_auth, db, health
+from . import config, dash_auth, db, fleet, health
 from .auth import Caller, caller, client_ip
 
 def _iso(v):
@@ -614,8 +614,13 @@ def need_login(request: Request):
         raise HTTPException(401, "login required")
 
 
-def page(name: str) -> str:
-    return (WEB / name).read_text()
+NAV = [("/", "Overview"), ("/portals", "Portals"), ("/data", "Data"), ("/explore", "Rate explorer"), ("/tender", "Tender lookup")]
+
+
+def page(name: str, current: str = "") -> str:
+    """A dashboard page with the shared navigation put in place of its <!--NAV--> marker."""
+    nav = "".join(f'<a href="{href}"{' aria-current="page"' if href == current else ''}>{label}</a>' for href, label in NAV)
+    return (WEB / name).read_text().replace("<!--NAV-->", f'<nav class="nav">{nav}<a href="/logout" class="out">Sign out</a></nav>')
 
 
 @app.get("/healthz")
@@ -657,14 +662,14 @@ def logout():
 def index(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", 303)
-    return page("index.html")
+    return page("index.html", "/")
 
 
 @app.get("/explore", response_class=HTMLResponse)
 def explore(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", 303)
-    return page("explore.html")
+    return page("explore.html", "/explore")
 
 
 def project_stats(c, project: str) -> dict:
@@ -842,11 +847,23 @@ def report_file(name: str):
     return FileResponse(REPORTS / name)
 
 
+ASSETS = WEB / "assets"
+
+
+@app.get("/assets/{name}", dependencies=[Depends(need_login)])
+def asset(name: str):
+    """Shared stylesheet and chart code for the dashboard pages."""
+    if not re.fullmatch(r"[a-z0-9_-]{1,40}\.(css|js)", name) or not (ASSETS / name).is_file():
+        raise HTTPException(404, "no such asset")
+    return FileResponse(ASSETS / name, media_type="text/css" if name.endswith(".css") else "text/javascript",
+                        headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/tender", response_class=HTMLResponse)
 def tender_page(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", 303)
-    return page("tender.html")
+    return page("tender.html", "/tender")
 
 
 @app.get("/api/tender", dependencies=[Depends(need_login)])
@@ -877,12 +894,17 @@ def tender_lookup(q: str = "", project: str = ""):
 
 
 @app.get("/api/probes", dependencies=[Depends(need_login)])
-def probes(minutes: int = 120, bucket: int = 0):
-    """Reachability of each target: the latest check, uptime, the outages in the window, and a bucketed history for the chart."""
+def probes(minutes: int = 120, bucket: int = 0, target: str = ""):
+    """Reachability of each runner target (or of one named target, e.g. gepnic:<portal>): the latest check, uptime, the outages in the
+    window, and a bucketed history for the chart. The per-portal fleet checks are left out of the list; /api/fleet covers them."""
     minutes = max(5, min(minutes, 10080))
     bucket = bucket if bucket > 0 else (1 if minutes <= 360 else 5 if minutes <= 1440 else 30)
     with db.conn() as c:
-        targets = [r["target"] for r in c.execute("SELECT DISTINCT target FROM probes WHERE at > now() - interval '1 day' ORDER BY 1").fetchall()]
+        if target:
+            targets = [target]
+        else:
+            targets = [r["target"] for r in c.execute("SELECT DISTINCT target FROM probes WHERE at > now() - interval '1 day' AND target NOT LIKE %s ORDER BY 1",
+                                                      (fleet.TARGET_PREFIX + "%",)).fetchall()]
         out = []
         for t in targets:
             last = c.execute("SELECT ok, ms, detail, at FROM probes WHERE target=%s ORDER BY at DESC LIMIT 1", (t,)).fetchone()
@@ -904,18 +926,30 @@ def probes(minutes: int = 120, bucket: int = 0):
     return JSONResponse(json.loads(json.dumps({"targets": out, "minutes": minutes}, default=_iso)))
 
 
+@app.post("/api/projects/{name}/archive", dependencies=[Depends(need_login)])
+def archive_project(name: str, archived: bool = True):
+    """Hide a finished project from the overview (or show it again). Nothing is deleted."""
+    with db.conn() as c:
+        n = c.execute("UPDATE projects SET settings = settings || jsonb_build_object('archived', %s::boolean) WHERE name=%s", (archived, name)).rowcount
+    if not n:
+        raise HTTPException(404, "unknown project")
+    return {"archived": archived}
+
+
 @app.get("/api/overview", dependencies=[Depends(need_login)])
-def overview():
+def overview(archived: bool = False):
     with db.conn() as c:
         # Creation order, so a project keeps its chart colour when others appear or disappear.
-        projects = [r["name"] for r in c.execute("SELECT name FROM projects ORDER BY created_at, name").fetchall()]
+        rows = c.execute("SELECT name, coalesce((settings->>'archived')::boolean, false) AS archived FROM projects ORDER BY created_at, name").fetchall()
+        hidden = [r["name"] for r in rows if r["archived"]]
+        projects = [r["name"] for r in rows if archived or not r["archived"]]
         out = []
         for p in projects:
             s = project_stats(c, p)
             h = health.evaluate(s)
             tot = c.execute("SELECT count(*) AS n FROM records WHERE project=%s", (p,)).fetchone()["n"]
             meta = c.execute("SELECT * FROM projects WHERE name=%s", (p,)).fetchone() or {}
-            out.append({"project": p, "records_total": tot, "stats": s, "title": meta.get("title") or p,
+            out.append({"project": p, "records_total": tot, "stats": s, "title": meta.get("title") or p, "archived": p in hidden,
                         "unit_label": meta.get("unit_label", "item"), "record_label": meta.get("record_label", "record"),
                         **progress(c, p, s), **h})
         repos = c.execute(
@@ -924,7 +958,7 @@ def overview():
                FROM runs GROUP BY repository, auth_kind ORDER BY max(last_seen) DESC""").fetchall()
     worst = max((["healthy", "degraded", "unhealthy"].index(o["verdict"]) for o in out), default=0)
     return JSONResponse(json.loads(json.dumps(
-        {"verdict": ["healthy", "degraded", "unhealthy"][worst], "projects": out, "repos": repos}, default=_iso)))
+        {"verdict": ["healthy", "degraded", "unhealthy"][worst], "projects": out, "repos": repos, "archived": hidden}, default=_iso)))
 
 
 @app.get("/api/runs", dependencies=[Depends(need_login)])
@@ -1067,3 +1101,91 @@ def queues():
         rows = c.execute(
             "SELECT project, status, count(*)::int AS n FROM queue GROUP BY 1, 2 ORDER BY 1, 2").fetchall()
     return {"queues": rows}
+
+
+# ----------------------------------------------------------------------------- portal fleet and data pages
+
+IST_NIGHT = "extract(hour FROM (at AT TIME ZONE 'Asia/Kolkata')) < 7"     # 00:00-07:00 in India: the portals' quiet hours
+
+
+@app.get("/portals", response_class=HTMLResponse)
+def portals_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", 303)
+    return page("portals.html", "/portals")
+
+
+@app.get("/data", response_class=HTMLResponse)
+def data_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", 303)
+    return page("data.html", "/data")
+
+
+@app.get("/api/fleet", dependencies=[Depends(need_login)])
+def fleet_api(hours: int = 24):
+    """Every GePNIC portal with its server, its share of all tenders, how it answers now, its uptime and answer times per hour, and the
+    latest capacity ramp for its server in the Indian night and in the Indian daytime."""
+    hours = max(1, min(hours, 168))
+    portals = fleet.load()
+    total = sum(p["tenders_june2026"] for p in portals) or 1
+    names = [fleet.TARGET_PREFIX + p["portal"] for p in portals]
+    with db.conn() as c:
+        last = {r["target"]: r for r in c.execute(
+            """SELECT DISTINCT ON (target) target, ok, ms, detail, at FROM probes
+               WHERE target = ANY(%s) AND at > now() - interval '30 minutes' ORDER BY target, at DESC""", (names,)).fetchall()}
+        hist = {}
+        for r in c.execute(
+                """SELECT target, extract(epoch FROM date_trunc('hour', at))::bigint AS h, count(*)::int AS n, count(*) FILTER (WHERE NOT ok)::int AS failed,
+                          (percentile_cont(0.5) WITHIN GROUP (ORDER BY ms) FILTER (WHERE ok))::int AS ms
+                   FROM probes WHERE target = ANY(%s) AND at > now() - make_interval(hours => %s) GROUP BY 1, 2 ORDER BY 2""", (names, hours)).fetchall():
+            hist.setdefault(r["target"], []).append([r["h"], r["n"], r["failed"], r["ms"]])
+        since = {r["target"]: r["at"] for r in c.execute(
+            """SELECT p.target, min(p.at) AS at FROM probes p JOIN (SELECT DISTINCT ON (target) target, ok FROM probes WHERE target = ANY(%s)
+                     AND at > now() - interval '30 minutes' ORDER BY target, at DESC) l USING (target)
+               WHERE p.ok = l.ok AND p.at > coalesce((SELECT max(at) FROM probes q WHERE q.target = p.target AND q.ok <> l.ok AND q.at > now() - interval '7 days'),
+                                                    now() - interval '7 days')
+               GROUP BY 1""", (names,)).fetchall()}
+        cap = {}
+        for r in c.execute(
+                f"""SELECT DISTINCT ON (server_ip, {IST_NIGHT}) server_ip, {IST_NIGHT} AS night, at, safe, tested_max, base_ms, steps, note
+                    FROM capacity ORDER BY server_ip, {IST_NIGHT}, at DESC""").fetchall():
+            cap.setdefault(r["server_ip"], {})["night" if r["night"] else "day"] = {k: r[k] for k in ("at", "safe", "tested_max", "base_ms", "steps", "note")}
+        scraped = c.execute("SELECT count(*) AS n FROM eprocure.tender_index WHERE is_real").fetchone()["n"] \
+            if c.execute("SELECT to_regclass('eprocure.tender_index') AS t").fetchone()["t"] else None
+    out_servers = []
+    for ip, ps in fleet.servers(portals).items():
+        rows = []
+        for p in ps:
+            t = fleet.TARGET_PREFIX + p["portal"]
+            h = hist.get(t, [])
+            n, f = sum(x[1] for x in h), sum(x[2] for x in h)
+            lr = last.get(t)
+            rows.append({**{k: p[k] for k in ("portal", "title", "kind", "ui", "tomcat", "organisations", "app_url")},
+                         "tenders": p["tenders_june2026"], "share": p["tenders_june2026"] / total,
+                         "ok": lr["ok"] if lr else None, "ms": lr["ms"] if lr else None, "detail": lr["detail"] if lr else "",
+                         "checked": lr["at"] if lr else None, "since": since.get(t), "uptime": (1 - f / n) if n else None, "checks": n, "hours": h,
+                         "scraped": scraped if p["portal"] == "eprocure.gov.in" else None})
+        tenders = sum(p["tenders_june2026"] for p in ps)
+        out_servers.append({"ip": ip, "portals": rows, "tenders": tenders, "share": tenders / total, "capacity": cap.get(ip, {})})
+    return JSONResponse(json.loads(json.dumps({"servers": out_servers, "total_tenders": total, "hours": hours, "source": fleet.source_note(),
+                                               "steps": list(fleet.RAMP_STEPS)}, default=_iso)))
+
+
+@app.get("/api/fleet/capacity", dependencies=[Depends(need_login)])
+def fleet_capacity(server_ip: str, days: int = 14):
+    """Every capacity ramp of one server in the last `days`, oldest first."""
+    days = max(1, min(days, 90))
+    with db.conn() as c:
+        rows = c.execute(f"""SELECT at, {IST_NIGHT} AS night, safe, tested_max, base_ms, steps, note FROM capacity
+                             WHERE server_ip=%s AND at > now() - make_interval(days => %s) ORDER BY at""", (server_ip, days)).fetchall()
+    return JSONResponse(json.loads(json.dumps({"server_ip": server_ip, "ramps": rows}, default=_iso)))
+
+
+@app.get("/api/showcase", dependencies=[Depends(need_login)])
+def showcase_api(project: str = "eprocure-tenders"):
+    with db.conn() as c:
+        row = c.execute("SELECT built_at, data FROM showcase WHERE project=%s", (project,)).fetchone()
+    if not row:
+        raise HTTPException(404, "not built yet: run scripts/build_showcase.py")
+    return JSONResponse(json.loads(json.dumps({"project": project, "built_at": row["built_at"], **row["data"]}, default=_iso)))

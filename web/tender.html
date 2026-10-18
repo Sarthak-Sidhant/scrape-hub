@@ -15,8 +15,9 @@ button{font:inherit;font-size:12px;padding:6px 12px;border-radius:6px;border:1px
 table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:3px 12px 3px 0;text-align:left;border-top:1px solid var(--line);font-weight:400;vertical-align:top}th{color:var(--dim);font-size:11px}
 td.n,th.n{text-align:right}.kv{display:grid;grid-template-columns:max-content 1fr;gap:2px 16px}.kv span:nth-child(odd){color:var(--dim)}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.chips a{padding:1px 9px;border:1px solid var(--line);border-radius:99px;text-decoration:none;font-size:12px}
+.nav{display:flex;flex-wrap:wrap;gap:2px;align-items:center}.nav a{text-decoration:none;color:var(--dim);padding:3px 10px;border-radius:6px;font-size:12px}.nav a:hover{color:var(--text);background:var(--panel2)}.nav a[aria-current=page]{color:var(--text);background:var(--panel2);font-weight:700}.nav a.out{margin-left:8px}header{flex-wrap:wrap}
 </style></head><body>
-<header><h1>TENDER LOOKUP</h1><span class="sp"></span><a href="/">dashboard</a><a href="/explore">rate explorer</a><a href="/logout">sign out</a></header>
+<header><h1>TENDER LOOKUP</h1><!--NAV--><span class="sp"></span></header>
 <main>
 <section><form id="f"><input id="q" placeholder="tender id, e.g. 2025_DRDO_875304_1 (start of it is enough)" autocomplete="off" aria-label="tender id" autofocus> <button>Look up</button></form>
 <div class="chips" id="matches"></div><div class="dim" id="msg" style="margin-top:8px">Shows what the hub holds for one tender: its fields, the document lists parsed from the details page, and the document files that were downloaded.</div></section>

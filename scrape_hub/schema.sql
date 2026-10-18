@@ -134,3 +134,24 @@ CREATE INDEX IF NOT EXISTS probes_target_at ON probes (target, at);
 
 -- Lets a runner ask "how many tenders of this organisation and window are already stored?" without scanning every record.
 CREATE INDEX IF NOT EXISTS records_org_window ON records (project, (data->>'org_id'), (data->'window'->>0), (data->'window'->>1));
+
+-- How much load each portal server takes right now: scripts/ramp.py raises parallel workers (1, 4, 8, 16) for a few seconds each and
+-- stops at the first step where the server slows down. One row per server per ramp; `steps` holds every step measured.
+CREATE TABLE IF NOT EXISTS capacity (
+    server_ip  TEXT NOT NULL,
+    at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    portals    TEXT[] NOT NULL DEFAULT '{}',
+    safe       INT NOT NULL DEFAULT 0,          -- highest worker count that did not slow the server (0: not answering)
+    tested_max INT NOT NULL DEFAULT 0,          -- highest worker count tried (safe = tested_max means the limit is above it)
+    base_ms    INT,                             -- median answer time with one worker
+    steps      JSONB NOT NULL DEFAULT '[]',
+    note       TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS capacity_server_at ON capacity (server_ip, at);
+
+-- Precomputed numbers for the data page (scripts/build_showcase.py), so the page never scans the records.
+CREATE TABLE IF NOT EXISTS showcase (
+    project  TEXT PRIMARY KEY,
+    built_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    data     JSONB NOT NULL
+);

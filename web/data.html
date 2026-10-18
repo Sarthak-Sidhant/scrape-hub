@@ -1,0 +1,115 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Scrape hub: data</title><link rel="stylesheet" href="/assets/hub.css"><style>
+.rank td:first-child{color:var(--dim);width:28px}.org{max-width:420px;white-space:normal}
+</style></head><body>
+<header><h1>DATA</h1><!--NAV--><span class="sp"></span><span class="dim" id="built">loading</span></header>
+<main>
+<div class="kpis" id="kpis"></div>
+
+<section id="s-years"><div class="head"><div><h2>Tenders per year, by where they are now</h2>
+<p class="lede">Every tender we hold from eprocure.gov.in (the Central Public Procurement Portal), by the year it was published and the stage the portal shows today.</p></div><div class="seg view"></div></div>
+<div class="chart" id="c-years"></div></section>
+
+<section id="s-months"><div class="head"><div><h2>When tenders are published</h2>
+<p class="lede">Tenders per month. Look for the March rush at the end of each financial year.</p></div><div class="seg view"></div></div>
+<div class="chart" id="c-months"></div></section>
+
+<div class="grid2">
+<section id="s-single"><div class="head"><div><h2>Tenders that got a single bid</h2>
+<p class="lede">Share of tenders with a known bid count where only one bidder took part: a common warning sign for weak competition.</p></div><div class="seg view"></div></div>
+<div class="chart" id="c-single"></div></section>
+<section id="s-bids"><div class="head"><div><h2>How many bids a tender gets</h2>
+<p class="lede">Tenders by number of bids received (tenders with a known bid count).</p></div><div class="seg view"></div></div>
+<div class="chart" id="c-bids"></div></section>
+</div>
+
+<div class="grid2">
+<section id="s-value"><div class="head"><div><h2>Typical tender size</h2>
+<p class="lede">Median estimated value of tenders published each year (only tenders that state a value above zero).</p></div><div class="seg view"></div></div>
+<div class="chart" id="c-value"></div></section>
+<section id="s-award"><div class="head"><div><h2>Time from publication to award</h2>
+<p class="lede">For awarded tenders with an award date: how long it took.</p></div><div class="seg view"></div></div>
+<div class="chart" id="c-award"></div></section>
+</div>
+
+<section id="s-cat"><div class="head"><div><h2>What is bought</h2>
+<p class="lede">Share of each year's tenders by category, as the buyer declared it.</p></div><div class="seg view"></div></div>
+<div class="chart" id="c-cat"></div></section>
+
+<section><h2>Biggest buyers</h2><p class="lede">Organisations by number of tenders.</p><div class="scroll"><table id="t-orgs" class="rank"></table></div></section>
+
+<section><h2>Most frequent winners</h2><p class="lede">Bidders named as the winner most often, with how many different buyer organisations awarded them.</p><div class="scroll"><table id="t-win" class="rank"></table></div></section>
+
+<section id="s-docs"><div class="head"><div><h2>Documents the portal will not serve</h2>
+<p class="lede">Share of each month's document links the portal refused (it sends an error page, also in a real browser). It is a property of the publication month, not of our load: most documents from early 2015 to early 2017 are gone.</p></div><div class="seg view"></div></div>
+<div class="chart" id="c-docs"></div></section>
+<p class="note" id="foot"></p>
+</main>
+<script src="/assets/charts.js"></script>
+<script>
+const {esc,fmt,inr,pct,compact,j}=Hub,$=id=>document.getElementById(id);
+const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const STAGES=[["awarded","Awarded","--s1"],["evaluating","In evaluation","--s2"],["to_open","To be opened","--s3"],["cancelled","Cancelled","--s4"],["retendered","Retendered","--s5"],["unknown","Stage not shown","--sx"]];
+const tbl=(head,rows)=>`<table><tr>${head.map(h=>`<th class="${h[1]||""}">${esc(h[0])}</th>`).join("")}</tr>${rows.map(r=>`<tr>${r.map((c,i)=>`<td class="${head[i][1]||""}">${c}</td>`).join("")}</tr>`).join("")}</table>`;
+function render(d){
+ const T=d.totals,Y=d.by_year,yrs=Y.map(y=>String(y.year));
+ const real=T.tenders,cov=T.planned?real/T.planned:null,files=T.files_stored+T.files_refused;
+ $("kpis").innerHTML=`<div class="kpi"><b>${fmt(real)}</b><span>tenders stored, ${esc(String(T.first_published).slice(0,4))} to ${esc(String(T.last_published).slice(0,4))}</span></div>
+  <div class="kpi"><b>${cov!=null?pct(cov):"-"}</b><span>of the ${fmt(T.planned)} tenders the portal counted</span></div>
+  <div class="kpi"><b>${fmt(T.organisations)}</b><span>buyer organisations</span></div>
+  <div class="kpi"><b>${fmt(T.awarded)}</b><span>awarded, ${inr(T.awarded_sum)} in stated award values</span></div>
+  <div class="kpi"><b>${fmt(T.files_stored)}</b><span>documents saved (${(T.files_bytes/1e12).toFixed(2)} TB); ${pct(T.files_refused/files)} of links refused</span></div>`;
+ // years by stage
+ Hub.view($("s-years"),$("c-years"),()=>Hub.bars($("c-years"),{labels:yrs,series:STAGES.map(([k,l,c])=>({key:k,label:l,color:c})),values:(i,k)=>Y[i][k],height:260,aria:"tenders per year by stage"}),
+  ()=>tbl([["Year"],...STAGES.map(s=>[s[1],"n"]),["Total","n"]],Y.map(y=>[y.year,...STAGES.map(s=>fmt(y[s[0]])),fmt(y.tenders)])));
+ // months heatmap
+ const now=new Date(),past=m=>m.year<now.getFullYear()||(m.year===now.getFullYear()&&m.month<=now.getMonth()+1);
+ const MS=d.months.filter(past),M=new Map(MS.map(m=>[m.year+"-"+m.month,m])),my=[...new Set(MS.map(m=>m.year))].filter(y=>y>=2013);
+ Hub.view($("s-months"),$("c-months"),()=>Hub.heat($("c-months"),{rows:my.map(String),cols:MON,value:(r,c)=>M.get(my[r]+"-"+(c+1))?.n??null,unit:"tenders",
+   head:(r,c)=>MON[c]+" "+my[r],aria:"tenders published per month"}),
+  ()=>tbl([["Year"],...MON.map(m=>[m,"n"])],my.map(y=>[y,...MON.map((_,i)=>fmt(M.get(y+"-"+(i+1))?.n))])));
+ // single bid
+ const yb=Y.filter(y=>y.with_bids>=200);
+ Hub.view($("s-single"),$("c-single"),()=>Hub.lines($("c-single"),{labels:yb.map(y=>String(y.year)),series:[{label:"single-bid share",color:"--s1",values:yb.map(y=>y.single_bid/y.with_bids)}],
+   yFmt:v=>Math.round(v*100)+"%",tipFmt:v=>pct(v),yMax:Math.ceil(Math.max(...yb.map(y=>y.single_bid/y.with_bids))*1.15/.2)*.2,aria:"single-bid share by year",
+   tipExtra:i=>[`${fmt(yb[i].single_bid)} of ${fmt(yb[i].with_bids)} tenders`,`average ${yb[i].bids_avg.toFixed(1)} bids`]}),
+  ()=>tbl([["Year"],["Single bid","n"],["With a bid count","n"],["Share","n"],["Average bids","n"]],yb.map(y=>[y.year,fmt(y.single_bid),fmt(y.with_bids),pct(y.single_bid/y.with_bids),y.bids_avg.toFixed(2)])));
+ // bids histogram
+ const B=d.bids,bt=B.reduce((a,b)=>a+b.n,0);
+ Hub.view($("s-bids"),$("c-bids"),()=>Hub.bars($("c-bids"),{labels:B.map(b=>b.bucket),series:[{key:"n",label:"tenders",color:"--s1"}],values:i=>B[i].n,aria:"tenders by number of bids",
+   tipHead:l=>l+(l==="1"?" bid":" bids"),tipExtra:i=>[pct(B[i].n/bt)+" of tenders with a bid count"]}),
+  ()=>tbl([["Bids"],["Tenders","n"],["Share","n"]],B.map(b=>[esc(b.bucket),fmt(b.n),pct(b.n/bt)])));
+ // value
+ const yv=Y.filter(y=>y.with_value>=200);
+ Hub.view($("s-value"),$("c-value"),()=>Hub.lines($("c-value"),{labels:yv.map(y=>String(y.year)),series:[{label:"median tender value",color:"--s1",values:yv.map(y=>y.value_median)}],
+   yFmt:v=>"₹"+Hub.money(v),aria:"median tender value by year",tipExtra:i=>[`90% of tenders under ${inr(yv[i].value_p90)}`,`${fmt(yv[i].with_value)} tenders state a value`]}),
+  ()=>tbl([["Year"],["Median","n"],["90th percentile","n"],["Total stated","n"],["Tenders with a value","n"]],yv.map(y=>[y.year,inr(y.value_median),inr(y.value_p90),inr(y.value_sum),fmt(y.with_value)])));
+ // award days
+ const A=d.award_days,at=A.reduce((a,b)=>a+b.n,0);
+ Hub.view($("s-award"),$("c-award"),()=>Hub.bars($("c-award"),{labels:A.map(a=>a.bucket),series:[{key:"n",label:"awarded tenders",color:"--s1"}],values:i=>A[i].n,aria:"time from publication to award",
+   tipExtra:i=>[pct(A[i].n/at)+" of awards with a date"]}),
+  ()=>tbl([["Time to award"],["Tenders","n"],["Share","n"]],A.map(a=>[esc(a.bucket),fmt(a.n),pct(a.n/at)])));
+ // categories, 100% stacked
+ const cats=["Goods","Works","Services"],CC=new Map();d.categories.forEach(c=>{const k=cats.includes(c.category)?c.category:"Other";const key=c.year+"|"+k;CC.set(key,(CC.get(key)||0)+c.n)});
+ const cs=[...cats.map((c,i)=>({key:c,label:c,color:"--s"+(i+1)})),{key:"Other",label:"Other or not stated",color:"--sx"}];
+ Hub.view($("s-cat"),$("c-cat"),()=>Hub.bars($("c-cat"),{labels:yrs,series:cs,values:(i,k)=>CC.get(yrs[i]+"|"+k)||0,share:true,height:220,aria:"category share by year"}),
+  ()=>tbl([["Year"],...cs.map(c=>[c.label,"n"])],yrs.map(y=>[y,...cs.map(c=>fmt(CC.get(y+"|"+c.key)||0))])));
+ // orgs
+ const mo=Math.max(...d.orgs.map(o=>o.tenders));
+ $("t-orgs").innerHTML=`<tr><th></th><th>Organisation</th><th>Tenders</th><th class="n">Awarded</th><th class="n">Median value</th><th class="n">Single bid</th><th class="n">Cancelled</th></tr>`+
+  d.orgs.map((o,i)=>`<tr><td>${i+1}</td><td class="org">${esc(o.org_name)}</td><td><div class="ib"><i style="width:${o.tenders/mo*120}px"></i>${fmt(o.tenders)}</div></td><td class="n">${fmt(o.awarded)}</td>
+   <td class="n">${inr(o.value_median)}</td><td class="n">${o.with_bids?pct(o.single_bid/o.with_bids):"-"}</td><td class="n">${pct(o.cancelled/o.tenders)}</td></tr>`).join("");
+ const mw=Math.max(...d.winners.map(w=>w.awards));
+ $("t-win").innerHTML=`<tr><th></th><th>Winner (as written on the portal)</th><th>Awards</th><th class="n">Buyers</th><th class="n">Stated award value</th></tr>`+
+  d.winners.map((w,i)=>`<tr><td>${i+1}</td><td class="org">${esc(w.winner)}</td><td><div class="ib"><i style="width:${w.awards/mw*120}px"></i>${fmt(w.awards)}</div></td><td class="n">${fmt(w.buyers)}</td><td class="n">${inr(w.awarded_sum)}</td></tr>`).join("");
+ // docs refused per month
+ const dm=d.months.filter(past).filter(m=>m.stored+m.refused>=50);
+ Hub.view($("s-docs"),$("c-docs"),()=>Hub.lines($("c-docs"),{labels:dm.map(m=>MON[m.month-1]+" "+String(m.year).slice(2)),series:[{label:"refused share",color:"--s2",values:dm.map(m=>m.refused/(m.stored+m.refused))}],
+   yMax:1,yFmt:v=>Math.round(v*100)+"%",tipFmt:v=>pct(v),height:220,aria:"share of document links refused per publication month",
+   tipExtra:i=>[`${fmt(dm[i].refused)} refused, ${fmt(dm[i].stored)} saved`]}),
+  ()=>tbl([["Month"],["Refused","n"],["Saved","n"],["Refused share","n"]],dm.map(m=>[MON[m.month-1]+" "+m.year,fmt(m.refused),fmt(m.stored),pct(m.refused/(m.stored+m.refused))])));
+ $("built").textContent="numbers built "+new Date(d.built_at).toLocaleString();
+ $("foot").textContent=`Source: tenders scraped from eprocure.gov.in, snapshot of ${new Date(d.data_as_of).toLocaleDateString()}. Values are the portal's own estimates in rupees; sums leave out ${fmt(T.value_outliers)} tenders stating more than ₹10,000 crore (almost all data-entry errors). Winner names are as written by buyers, so one company can appear under several spellings.`;
+}
+j("/api/showcase").then(render).catch(e=>{if(e!==0)$("kpis").innerHTML=`<section class="dim">The numbers have not been built yet. They are rebuilt every morning (scripts/build_showcase.py).</section>`});
+</script></body></html>

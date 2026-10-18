@@ -1,0 +1,15 @@
+[Unit]
+Description=Rebuild the tender facts table and the numbers behind the /data page
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=scrapehub
+WorkingDirectory=/opt/scrape-hub
+EnvironmentFile=/etc/scrape-hub/env
+# the index and facts tables live in the postgres-owned eprocure schema; "+" runs this step as root, which hands it to postgres
+ExecStartPre=+/usr/sbin/runuser -u postgres -- psql -d scrape_hub -v ON_ERROR_STOP=1 -q -f /opt/scrape-hub/scripts/ops/tender_index.sql
+ExecStartPre=+/usr/sbin/runuser -u postgres -- psql -d scrape_hub -v ON_ERROR_STOP=1 -q -f /opt/scrape-hub/scripts/ops/tender_facts.sql
+ExecStart=/opt/scrape-hub/.venv/bin/python scripts/build_showcase.py
+TimeoutStartSec=3600
+NoNewPrivileges=true

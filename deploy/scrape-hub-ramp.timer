@@ -1,0 +1,11 @@
+[Unit]
+Description=Portal capacity ramp twice a day: Indian night (03:45 IST) and Indian afternoon (15:15 IST)
+
+[Timer]
+OnCalendar=*-*-* 22:15:00 UTC
+OnCalendar=*-*-* 09:45:00 UTC
+RandomizedDelaySec=300
+Persistent=false
+
+[Install]
+WantedBy=timers.target

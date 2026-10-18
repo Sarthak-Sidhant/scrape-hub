@@ -1,0 +1,10 @@
+[Unit]
+Description=Rebuild the /data page numbers daily, after the nightly backup
+
+[Timer]
+OnCalendar=*-*-* 05:00:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target
