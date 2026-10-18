@@ -93,3 +93,18 @@ def test_archiving_hides_a_project_without_deleting_it(client, clean, login):
     login.post("/api/projects/old-experiment/archive?archived=false")
     assert len(login.get("/api/overview").json()["projects"]) == 2
     assert login.post("/api/projects/nope/archive").status_code == 404
+
+
+def test_fleet_shows_counting_and_scraping_progress_per_portal(client, clean, login):
+    with db.conn() as c:
+        c.execute("""INSERT INTO queue (project, key, partition_id, status, payload, fetched) VALUES
+            ('gepnic-sikkimtender-plan', 'count:1', 0, 'done', '{"kind":"count"}', 96),
+            ('gepnic-sikkimtender-plan', 'count:2', 0, 'pending', '{"kind":"count"}', 0),
+            ('gepnic-wbtenders', 'w1', 0, 'done', '{"expected": 1000}', 990),
+            ('gepnic-wbtenders', 'w2', 0, 'pending', '{"expected": 500}', 0)""")
+    d = login.get("/api/fleet").json()
+    by = {p["portal"]: p for s in d["servers"] for p in s["portals"]}
+    sk, wb = by["sikkimtender.gov.in"]["progress"], by["wbtenders.gov.in"]["progress"]
+    assert sk["count_done"] == 1 and sk["count_open"] == 1 and sk["counted"] == 96
+    assert wb["windows_done"] == 1 and wb["windows_open"] == 1 and wb["tenders_expected"] == 1500 and wb["tenders_fetched"] == 990
+    assert by["tntenders.gov.in"]["progress"] is None and by["eprocure.gov.in"]["progress"] is None

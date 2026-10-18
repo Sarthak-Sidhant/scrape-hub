@@ -449,7 +449,7 @@ async function tick(){
   const [ov,runs,tp,ips,past]=await Promise.all([j("/api/overview"+(showArch?"?archived=1":"")),j("/api/runs?limit=200"),j(`/api/throughput?minutes=${RANGES[range].min}&bucket=${RANGES[range].bucket}`),j("/api/ips"),j(`/api/workflow-runs?state=past&limit=${histLimit}`)]);window.__past=past.runs;lastHist=past.runs;
   const v=$("verdict"),has=ov.projects.length;v.textContent=has?ov.verdict:"no data";v.className="pill "+(has?ov.verdict:"dim");
   kpis(ov);
-  $("arch").innerHTML=ov.archived.length?`${ov.archived.length} archived project${ov.archived.length>1?"s":""} ${showArch?"shown":"hidden"} (${ov.archived.map(esc).join(", ")})<button class="act" id="archToggle">${showArch?"Hide them":"Show them"}</button>`:"";
+  $("arch").innerHTML=ov.archived.length?`${ov.archived.length} archived project${ov.archived.length>1?"s":""} ${showArch?"shown":"hidden"} (${ov.archived.length>6?ov.archived.slice(0,4).map(esc).join(", ")+` and ${ov.archived.length-4} more; portal projects are on <a href="/portals">Portals</a>`:ov.archived.map(esc).join(", ")})<button class="act" id="archToggle">${showArch?"Hide them":"Show them"}</button>`:"";
   try{const pr=await j("/api/probes?minutes="+PR[prange].min);renderProbes(pr)}catch(e){}
   const det={};await Promise.all(ov.projects.map(async p=>{try{det[p.project]=await j("/api/projects/"+encodeURIComponent(p.project))}catch(e){}}));
   $("projects").innerHTML=ov.projects.map(p=>projectCard(p,runs.runs,det[p.project])).join("")||'<section class="dim">No projects have reported yet.</section>';

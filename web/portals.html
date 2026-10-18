@@ -40,6 +40,13 @@ function capCell(c){if(!c)return'<span class="dim">no ramp yet</span>';
  if(c.note)return`<span class="dim" title="${esc(c.note)}">skipped</span>`;
  const lab=c.safe===0?"0":c.safe>=c.tested_max&&c.tested_max>=16?c.safe+"+":String(c.safe);
  return`<span class="cap"><b class="${c.safe===0?"bad":c.safe<8?"warn":""}">${lab}</b><small>${c.base_ms!=null?c.base_ms+" ms at 1 · ":""}${ago(c.at)} ago</small></span>`}
+function progCell(x){
+ if(x.scraped)return`<div class="cap"><b>${fmt(x.scraped)}</b><small>tenders stored</small></div>`;
+ const g=x.progress;if(!g)return'<div class="dim">not started</div>';
+ const ct=g.count_done+g.count_open+g.count_failed,wt=g.windows_done+g.windows_open+g.windows_failed;
+ if(g.count_open||!wt)return`<div class="cap" title="${fmt(g.count_done)} of ${fmt(ct)} count tasks done, ${fmt(g.count_failed)} failed"><b>counting ${ct?Math.round(g.count_done/ct*100):0}%</b><small>${fmt(g.counted)} tenders found so far</small></div>`;
+ const pc=g.tenders_expected?g.tenders_fetched/g.tenders_expected:0;
+ return`<div class="cap" title="${fmt(g.windows_done)} of ${fmt(wt)} windows done, ${fmt(g.windows_failed)} failed"><b>${pct(pc,0)}</b><small>${fmt(g.tenders_fetched)} of ${fmt(g.tenders_expected)} tenders</small></div>`}
 function strip(hours,n){const now=Math.floor(Date.now()/3600000)*3600,by=new Map(hours.map(h=>[h[0],h]));let s="";
  for(let i=n-1;i>=0;i--){const t=now-i*3600,h=by.get(t),d=new Date(t*1000).toLocaleString([],{weekday:"short",hour:"2-digit",minute:"2-digit"});
   if(!h){s+=`<i title="${d}: no checks"></i>`;continue}const f=h[2]/h[1];
@@ -65,7 +72,7 @@ function table(d){
  if(SORT==="trouble"){const o={down:0,slow:1,none:2,up:3};S.sort((a,b)=>o[srvState(a)]-o[srvState(b)]||(a.portals[0].uptime??1)-(b.portals[0].uptime??1))}
  if(SORT==="speed")S.sort((a,b)=>(b.portals[0].ms??-1)-(a.portals[0].ms??-1));
  const maxShare=Math.max(...d.servers.map(s=>s.share));
- document.getElementById("servers").innerHTML=`<tr><th class="n">#</th><th>Portal(s) · server</th><th>Tenders</th><th>Now</th><th>Last 24 h</th><th class="n">Uptime</th><th>Capacity: night</th><th>Capacity: day</th></tr>`+
+ document.getElementById("servers").innerHTML=`<tr><th class="n">#</th><th>Portal(s) · server</th><th>Tenders</th><th>Now</th><th>Last 24 h</th><th class="n">Uptime</th><th>Capacity: night</th><th>Capacity: day</th><th>Our scrape</th></tr>`+
  S.map(s=>{const p=s.portals[0],st=srvState(s);
   const who=s.portals.map(x=>`<div><span class="pname">${esc(x.title)}</span> <a class="dom" href="${esc(x.app_url)}" target="_blank" rel="noopener">${esc(x.portal)}</a>${x.ui==="gepnic2"?' <span class="warn" title="moved to the new GePNIC 2.0 interface; our crawler does not work there yet">2.0</span>':""}${x.scraped?` <span class="ok" title="tenders we hold from this portal">· ${fmt(x.scraped)} scraped</span>`:""}</div>`).join("");
   const ups=s.portals.filter(x=>x.uptime!=null),up=ups.length?ups.reduce((a,x)=>a+x.uptime,0)/ups.length:null;
@@ -73,7 +80,7 @@ function table(d){
   return`<tr class="srv"><td class="n dim">${rank.get(s.ip)}</td><td>${who}<div class="dom">${esc(s.ip)} · Tomcat ${esc(p.tomcat||"?")}</div></td>
    <td><div class="ib"><i style="width:${Math.max(1,s.share/maxShare*90)}px"></i><span>${fmt(s.tenders)}</span></div><span class="dim">${pct(s.share)}</span></td>
    <td>${now}</td><td>${strip(p.hours,24)}</td><td class="n ${up!=null&&up<.9?"warn":""}">${up!=null?pct(up):"-"}</td>
-   <td>${capCell(s.capacity.night)}</td><td>${capCell(s.capacity.day)}</td></tr>`}).join("");
+   <td>${capCell(s.capacity.night)}</td><td>${capCell(s.capacity.day)}</td><td>${s.portals.map(progCell).join("")}</td></tr>`}).join("");
  document.getElementById("src").textContent="Sources: "+d.source+". Uptime is the share of minute checks that got the live search page.";}
 function minis(d){
  const S=d.servers.filter(s=>s.capacity.night||s.capacity.day).slice(0,18);

@@ -1122,6 +1122,21 @@ def data_page(request: Request):
     return page("data.html", "/data")
 
 
+def portal_progress(prog, name):
+    """Counting and scraping progress of one portal from its two hub projects (see eprocure-scrape's portal.py for the names)."""
+    if name == "eprocure.gov.in":
+        return None
+    slug = re.sub(r"[^a-z0-9]+", "-", re.sub(r"\.(gov|nic|co)\.in", "", name.lower())).strip("-")
+    plan, ten = prog.get(f"gepnic-{slug}-plan", {}), prog.get(f"gepnic-{slug}", {})
+    if not plan and not ten:
+        return None
+    n = lambda d, st: d.get(st, {}).get("n", 0)
+    return {"count_done": n(plan, "done"), "count_open": n(plan, "pending") + n(plan, "claimed"), "count_failed": n(plan, "failed"),
+            "counted": plan.get("done", {}).get("fetched", 0),
+            "windows_done": n(ten, "done"), "windows_open": n(ten, "pending") + n(ten, "claimed"), "windows_failed": n(ten, "failed"),
+            "tenders_expected": sum(v["expected"] for v in ten.values()), "tenders_fetched": ten.get("done", {}).get("fetched", 0)}
+
+
 @app.get("/api/fleet", dependencies=[Depends(need_login)])
 def fleet_api(hours: int = 24):
     """Every GePNIC portal with its server, its share of all tenders, how it answers now, its uptime and answer times per hour, and the
@@ -1153,6 +1168,12 @@ def fleet_api(hours: int = 24):
             cap.setdefault(r["server_ip"], {})["night" if r["night"] else "day"] = {k: r[k] for k in ("at", "safe", "tested_max", "base_ms", "steps", "note")}
         scraped = c.execute("SELECT count(*) AS n FROM eprocure.tender_index WHERE is_real").fetchone()["n"] \
             if c.execute("SELECT to_regclass('eprocure.tender_index') AS t").fetchone()["t"] else None
+        # scraping progress per portal project (gepnic-<slug> and gepnic-<slug>-plan): one pass over the queue table
+        prog = {}
+        for r in c.execute("""SELECT project, status, count(*)::int AS n, coalesce(sum(fetched), 0)::bigint AS fetched,
+                                     coalesce(sum((payload->>'expected')::bigint), 0)::bigint AS expected
+                              FROM queue WHERE project LIKE 'gepnic-%' GROUP BY 1, 2""").fetchall():
+            prog.setdefault(r["project"], {})[r["status"]] = {"n": r["n"], "fetched": r["fetched"], "expected": r["expected"]}
     out_servers = []
     for ip, ps in fleet.servers(portals).items():
         rows = []
@@ -1165,7 +1186,8 @@ def fleet_api(hours: int = 24):
                          "tenders": p["tenders_june2026"], "share": p["tenders_june2026"] / total,
                          "ok": lr["ok"] if lr else None, "ms": lr["ms"] if lr else None, "detail": lr["detail"] if lr else "",
                          "checked": lr["at"] if lr else None, "since": since.get(t), "uptime": (1 - f / n) if n else None, "checks": n, "hours": h,
-                         "scraped": scraped if p["portal"] == "eprocure.gov.in" else None})
+                         "scraped": scraped if p["portal"] == "eprocure.gov.in" else None,
+                         "progress": portal_progress(prog, p["portal"])})
         tenders = sum(p["tenders_june2026"] for p in ps)
         out_servers.append({"ip": ip, "portals": rows, "tenders": tenders, "share": tenders / total, "capacity": cap.get(ip, {})})
     return JSONResponse(json.loads(json.dumps({"servers": out_servers, "total_tenders": total, "hours": hours, "source": fleet.source_note(),
