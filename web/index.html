@@ -167,8 +167,9 @@ function speedHtml(id,d){
  return `<div class="speed"><div class="sr"><span class="sl">Speed</span><div class="seg" role="group" aria-label="runner speed">${btns}<button class="pause" data-pause="${pid}" aria-pressed="${!!sv.paused}">${sv.paused?"Resume":"Pause"}</button></div>
   <label title="When more than 10% of work is blocked, or eprocure sends several 429/403/503 responses, halve the threads and add a delay until it calms down."><input type="checkbox" data-auto="${pid}" ${sv.auto_backoff?"checked":""}> auto-backoff</label></div>
   <div class="eff">${eff} <span>Applies to every runner within about 30 seconds. Faster means more load on the portal.</span></div>${thr}${adaptHtml(d)}</div>`}
-function adaptHtml(d){const a=(d.settings||{}).adaptive;if(!a||a.on===false)return"";const last=(d.adjustments||[])[0];
- return `<div class="eff"><b>Automatic throttle on</b>: aims for ${a.target_s??1.5} s per request, between ${(d.settings||{}).min_threads||1} and ${a.max_threads??16} threads.${last?` Last change ${ago(last.at)} ago: ${last.threads_from} → ${last.threads_to} threads (${esc(last.reason)}).`:" No change yet."}</div>`}
+function adaptHtml(d){const sv=d.settings||{},a=sv.adaptive;if(!a||a.on===false)return"";const last=(d.adjustments||[])[0];
+ const ph={peak:"peak (22:00-06:00 IST): hammer",shoulder:"shoulder (20-22, 06-08 IST)",day:"day (08:00-20:00 IST): conservative"}[sv.adaptive_phase]||"starting";
+ return `<div class="eff"><b>Automatic throttle</b>, ${ph}: now ${sv.threads} threads and up to ${sv.max_claimed??"?"} windows at once (night cap ${a.max_windows??24}).${last?` Last change ${ago(last.at)} ago: threads ${last.threads_from} → ${last.threads_to}, windows ${last.claimed_from??"?"} → ${last.claimed_to??"?"} (${esc(last.reason)}).`:" No change yet."}</div>`}
 async function saveSpeed(id,patch){
  const sv=(window.__det[id]||{}).settings||{threads:4,delay_ms:0,paused:false,auto_backoff:true};
  const body={threads:sv.threads,delay_ms:sv.delay_ms,paused:sv.paused,auto_backoff:sv.auto_backoff,...patch};

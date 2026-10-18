@@ -785,28 +785,46 @@ def test_retry_after_s_setting_hands_failed_items_out_at_once(client, clean):
     assert [i["key"] for i in again()] == ["k1"]
 
 
-def test_adaptive_throttle_follows_the_measured_answer_time(client, clean):
+def test_throttle_phases_follow_india_time():
+    from scrape_hub.app import ist_phase
+    assert [ist_phase(h) for h in (21, 22, 2, 5, 6, 7, 8, 13, 19, 20)] == \
+        ["shoulder", "peak", "peak", "peak", "shoulder", "shoulder", "day", "day", "day", "shoulder"]
+
+
+def test_throttle_step_moves_threads_and_windows_within_the_phase():
+    from scrape_hub.app import adapt_step
+    ad = {"max_windows": 20}
+    assert adapt_step("peak", ad, 4, 6, 0.8, 0, 0)[:2] == (6, 10)          # quick at night: +2 threads, +4 windows
+    assert adapt_step("peak", ad, 15, 19, 0.8, 0, 0)[:2] == (16, 20)       # up to the ceilings
+    assert adapt_step("day", ad, 4, 6, 0.5, 0, 0)[:2] == (5, 7)            # quick in the day: +1 each, more gently
+    assert adapt_step("day", ad, 12, 20, 0.5, 0, 0)[:2] == (6, 10)         # day ceilings: 6 threads, half the night windows
+    assert adapt_step("peak", ad, 8, 12, 4.0, 0, 0)[:2] == (7, 10)         # above the 3 s target: ease off
+    assert adapt_step("peak", ad, 8, 12, 7.0, 0, 0)[:2] == (4, 6)          # over twice the target: halve both
+    assert adapt_step("peak", ad, 8, 12, 0.8, 0, 0.25)[:2] == (4, 6)       # searches failing: halve even if answers look quick
+    assert adapt_step("peak", ad, 1, 1, 9.0, 0, 0)[:2] == (1, 1)           # never below one thread and one window
+    assert adapt_step("peak", ad, 8, 12, None, 0, 0)[:2] == (8, 12)        # too little traffic: leave it
+    assert adapt_step("peak", {"max_windows": 20, "peak": {"target_s": 1.0}}, 8, 12, 1.5, 0, 0)[:2] == (7, 10)   # per-project override
+
+
+def test_adaptive_throttle_acts_once_a_minute_and_logs(client, clean):
+    import datetime
     from scrape_hub.app import adapt_speeds
     rid = start(client, project="adapt")
-    def measure(n, secs, errors=0):
-        with db.conn() as c:
-            c.execute("DELETE FROM metrics")
-            c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,'adapt','n_http',%s), (%s,'adapt','t_http_s',%s), (%s,'adapt','http_error',%s)",
-                      (rid, n, rid, n * secs, rid, errors))
-            c.execute("UPDATE projects SET settings = settings - 'adaptive_at'")
-        with db.conn() as c:
-            adapt_speeds(c)
-        with db.conn() as c:
-            return c.execute("SELECT (settings->>'threads')::int AS t FROM projects WHERE name='adapt'").fetchone()["t"]
+    ist = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
     with db.conn() as c:
-        c.execute("""UPDATE projects SET settings = '{"threads": 4, "min_threads": 2, "adaptive": {"target_s": 1.5, "max_threads": 6}}' WHERE name='adapt'""")
-    assert measure(200, 0.5) == 5                 # quick: one more
-    assert measure(200, 0.5) == 6
-    assert measure(200, 0.5) == 6                 # capped at max_threads
-    assert measure(200, 2.0) == 5                 # above target: one fewer
-    assert measure(200, 4.0) == 2                 # over twice the target: halve, not below min_threads
-    assert measure(10, 9.0) == 2                  # too few requests to judge: unchanged
-    assert measure(200, 0.5, errors=40) == 2      # many dropped connections: halve (already at the floor)
+        c.execute("""UPDATE projects SET settings = '{"threads": 4, "max_claimed": 6, "adaptive": {"max_windows": 20}}' WHERE name='adapt'""")
+        c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,'adapt','n_http',200), (%s,'adapt','t_http_s',100)", (rid, rid))
+    night = datetime.datetime(2026, 10, 19, 2, 0, tzinfo=ist)
     with db.conn() as c:
-        rows = c.execute("SELECT threads_from, threads_to FROM adjustments WHERE project='adapt' ORDER BY at").fetchall()
-    assert [(r["threads_from"], r["threads_to"]) for r in rows] == [(4, 5), (5, 6), (6, 5), (5, 2)]
+        adapt_speeds(c, now=night)
+    with db.conn() as c:
+        adapt_speeds(c, now=night + datetime.timedelta(seconds=30))      # within the minute: no second change
+    with db.conn() as c:
+        st = c.execute("SELECT settings FROM projects WHERE name='adapt'").fetchone()["settings"]
+        rows = c.execute("SELECT threads_from, threads_to, claimed_from, claimed_to, phase FROM adjustments").fetchall()
+    assert (st["threads"], st["max_claimed"], st["adaptive_phase"]) == (6, 10, "peak")
+    assert [(r["threads_from"], r["threads_to"], r["claimed_from"], r["claimed_to"], r["phase"]) for r in rows] == [(4, 6, 6, 10, "peak")]
+    with db.conn() as c:
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 19, 9, 0, tzinfo=ist))   # morning: straight down to the day ceilings
+        st = c.execute("SELECT settings FROM projects WHERE name='adapt'").fetchone()["settings"]
+    assert (st["threads"], st["max_claimed"]) == (6, 10) and st["adaptive_phase"] == "day"

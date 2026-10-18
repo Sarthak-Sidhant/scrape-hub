@@ -22,42 +22,81 @@ def _iso(v):
 WEB = Path(__file__).resolve().parent.parent / "web"
 
 
-def adapt_speeds(c):
-    """The automatic throttle for projects with settings.adaptive = {"target_s": 1.5, "max_threads": 16}: once a minute, from what the
-    runners measured in the last 3 minutes, halve the threads if the target answers slower than twice the target (or drops many
-    connections), take one off above the target, add one well below it. Never below min_threads (default 1) or above max_threads.
-    Only one hub worker acts per minute (advisory lock plus the time of the last change), and every change is logged in `adjustments`."""
+# The throttle's intensity by time of day in India (where the portals' users are). Peak: hammer; shoulder: medium; day: conservative.
+# target_s: answer time to aim for; up: (threads, windows) added a minute while well under it; down: removed while above it;
+# threads/windows: ceilings, windows as a share of the project's night window cap.
+PHASES = {
+    "peak":     {"target_s": 3.0, "up": (2, 4), "down": (1, 2), "threads": 16, "windows": 1.0},
+    "shoulder": {"target_s": 2.0, "up": (1, 2), "down": (1, 2), "threads": 10, "windows": 0.75},
+    "day":      {"target_s": 1.2, "up": (1, 1), "down": (1, 1), "threads": 6,  "windows": 0.5},
+}
+
+
+def ist_phase(hour):
+    """peak 22:00-06:00, shoulder 20:00-22:00 and 06:00-08:00, day 08:00-20:00 (IST hours)."""
+    return "peak" if hour >= 22 or hour < 6 else "shoulder" if hour >= 20 or hour < 8 else "day"
+
+
+def adapt_step(phase, ad, threads, windows, sec, err_frac, fail_frac):
+    """One throttle decision. Returns (threads, windows, reason). ad: the project's settings.adaptive."""
+    ph = {**PHASES[phase], **(ad.get(phase) or {})}
+    night_cap = int(ad.get("max_windows", 24))
+    t_hi, w_hi = int(ph["threads"]), max(1, round(night_cap * float(ph["windows"])))
+    t_lo, w_lo = 1, 1
+    target = float(ph["target_s"])
+    up_t, up_w = ph["up"]
+    dn_t, dn_w = ph["down"]
+    if threads > t_hi or windows > w_hi:
+        return min(threads, t_hi), min(windows, w_hi), f"{phase}: ceilings are {t_hi} threads, {w_hi} windows"
+    if sec is None:
+        return threads, windows, "too little traffic to judge"
+    if sec > 2 * target or err_frac > 0.05 or fail_frac > 0.10:
+        bits = [f"{sec:.1f} s per request"] + ([f"{err_frac:.0%} dropped"] if err_frac > 0.05 else []) + ([f"{fail_frac:.0%} of searches/windows failing"] if fail_frac > 0.10 else [])
+        return max(t_lo, threads // 2), max(w_lo, windows // 2), f"{phase}: {', '.join(bits)}: halve"
+    if sec > target:
+        return max(t_lo, threads - dn_t), max(w_lo, windows - dn_w), f"{phase}: {sec:.1f} s per request, above {target} s: ease off"
+    if sec < 0.7 * target:
+        return min(t_hi, threads + up_t), min(w_hi, windows + up_w), f"{phase}: {sec:.1f} s per request, well under {target} s: more"
+    return threads, windows, f"{phase}: {sec:.1f} s per request: holding"
+
+
+def adapt_speeds(c, now=None):
+    """The automatic throttle, once a minute, for projects with settings.adaptive (e.g. {"max_windows": 24}): from what the runners measured
+    in the last 3 minutes (seconds per portal request, dropped connections) and the share of windows or count tasks that failed, it moves
+    both the threads per process and the cap on items in flight (max_claimed: searches and logins, the load that breaks portals), within the
+    current phase's ceilings (see PHASES). Only one hub worker acts per minute; every change is logged in `adjustments`."""
     if not c.execute("SELECT pg_try_advisory_xact_lock(748211) AS ok").fetchone()["ok"]:
         return
+    import datetime
+    now = now or datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+    phase = ist_phase(now.hour)
     for p in c.execute("SELECT name, settings FROM projects WHERE settings ? 'adaptive' AND NOT coalesce((settings->>'paused')::boolean, false)").fetchall():
         st, ad = p["settings"], p["settings"].get("adaptive") or {}
         if not ad.get("on", True):
             continue
         last = st.get("adaptive_at")
-        if last and time.time() - float(last) < 55:
+        if last and now.timestamp() - float(last) < 55:
             continue
         m = c.execute("""SELECT coalesce(sum(value) FILTER (WHERE name='n_http'), 0) AS n, coalesce(sum(value) FILTER (WHERE name='t_http_s'), 0) AS t,
                                 coalesce(sum(value) FILTER (WHERE name='http_error'), 0) AS e
                          FROM metrics WHERE project=%s AND name IN ('n_http', 't_http_s', 'http_error') AND at > now() - interval '3 minutes'""",
                       (p["name"],)).fetchone()
+        q = c.execute("""SELECT count(*) FILTER (WHERE status='failed' AND claimed_at > now() - interval '3 minutes') AS f,
+                                count(*) FILTER (WHERE status='done' AND done_at > now() - interval '3 minutes') AS d
+                         FROM queue WHERE project=%s""", (p["name"],)).fetchone()
         n, t, e = float(m["n"]), float(m["t"]), float(m["e"])
-        if n < 30:      # too little traffic to judge (starting up, holding, or idle): leave it
-            continue
-        target, cur = float(ad.get("target_s", 1.5)), int(st.get("threads", 4))
-        lo, hi, sec = max(1, int(st.get("min_threads") or 1)), int(ad.get("max_threads", 16)), t / n
-        if sec > 2 * target or e > 0.05 * n:
-            new, why = max(lo, cur // 2), f"{sec:.1f} s per request{f', {int(e)} dropped' if e else ''}: halve"
-        elif sec > target:
-            new, why = max(lo, cur - 1), f"{sec:.1f} s per request, above {target} s: one fewer"
-        elif sec < 0.7 * target:
-            new, why = min(hi, cur + 1), f"{sec:.1f} s per request, well under {target} s: one more"
-        else:
-            new, why = cur, f"{sec:.1f} s per request: holding"
-        c.execute("UPDATE projects SET settings = settings || jsonb_build_object('threads', %s::int, 'adaptive_at', %s::float8) WHERE name=%s",
-                  (new, time.time(), p["name"]))
-        if new != cur:
-            c.execute("""INSERT INTO adjustments (project, s_per_req, requests, errors, threads_from, threads_to, reason) VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-                      (p["name"], sec, int(n), int(e), cur, new, why))
+        f, d = int(q["f"]), int(q["d"])
+        sec = t / n if n >= 30 else None
+        fail_frac = f / (f + d) if f + d >= 5 else 0.0
+        threads, windows = int(st.get("threads", 4)), int(st.get("max_claimed") or max(1, int(ad.get("max_windows", 24)) // 2))
+        nt, nw, why = adapt_step(phase, ad, threads, windows, sec, e / n if n else 0.0, fail_frac)
+        c.execute("""UPDATE projects SET settings = settings || jsonb_build_object('threads', %s::int, 'max_claimed', %s::int, 'adaptive_at', %s::float8,
+                                                                                   'adaptive_phase', %s::text) WHERE name=%s""",
+                  (nt, nw, now.timestamp(), phase, p["name"]))
+        if (nt, nw) != (threads, windows):
+            c.execute("""INSERT INTO adjustments (project, s_per_req, requests, errors, threads_from, threads_to, claimed_from, claimed_to, phase, failed_frac, reason)
+                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                      (p["name"], sec, int(n), int(e), threads, nt, windows, nw, phase, fail_frac, why))
 
 
 def janitor():
@@ -795,7 +834,8 @@ def project_detail(name: str):
                FROM metrics WHERE project=%s AND at > now() - interval '1 hour' GROUP BY name ORDER BY name""", (name,)).fetchall()
         fresh = c.execute("SELECT max(scraped_at) AS newest, count(*) AS n FROM records WHERE project=%s", (name,)).fetchone()
         effective = effective_settings(c, name)
-        adj = c.execute("SELECT at, s_per_req, requests, threads_from, threads_to, reason FROM adjustments WHERE project=%s ORDER BY at DESC LIMIT 10", (name,)).fetchall()
+        adj = c.execute("""SELECT at, s_per_req, requests, threads_from, threads_to, claimed_from, claimed_to, phase, failed_frac, reason FROM adjustments
+                           WHERE project=%s ORDER BY at DESC LIMIT 10""", (name,)).fetchall()
         fsum = failure_summary(c, name)
         stats = project_stats(c, name)
         prog = progress(c, name, stats)

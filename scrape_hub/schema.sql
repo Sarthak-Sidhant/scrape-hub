@@ -168,3 +168,8 @@ CREATE TABLE IF NOT EXISTS adjustments (
     reason       TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS adjustments_project_at ON adjustments (project, at);
+
+ALTER TABLE adjustments ADD COLUMN IF NOT EXISTS claimed_from INT;
+ALTER TABLE adjustments ADD COLUMN IF NOT EXISTS claimed_to   INT;
+ALTER TABLE adjustments ADD COLUMN IF NOT EXISTS phase        TEXT NOT NULL DEFAULT '';
+ALTER TABLE adjustments ADD COLUMN IF NOT EXISTS failed_frac  DOUBLE PRECISION;
