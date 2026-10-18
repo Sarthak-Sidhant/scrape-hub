@@ -7,7 +7,7 @@
 --   sudo -u postgres psql -d scrape_hub -f scripts/ops/tender_index.sql
 BEGIN;
 CREATE SCHEMA IF NOT EXISTS eprocure;
-DROP TABLE IF EXISTS eprocure.tender_index, eprocure.file_index;
+DROP TABLE IF EXISTS eprocure.org_index, eprocure.tender_index, eprocure.file_index;
 
 -- one row per downloaded or refused document file
 CREATE TABLE eprocure.file_index AS
@@ -58,3 +58,19 @@ GRANT SELECT ON eprocure.tender_index, eprocure.file_index TO scrape_hub;
 COMMIT;
 ANALYZE eprocure.tender_index;
 ANALYZE eprocure.file_index;
+
+-- Which organisation belongs to which tenders, and where their files sit in object storage. The organisation id in the R2 path is the
+-- portal's dropdown id at scrape time; the organisation code is the one inside the tender id and does not change. One row per pair.
+DROP TABLE IF EXISTS eprocure.org_index;
+CREATE TABLE eprocure.org_index AS
+SELECT org_id, org_code, max(org_name) AS org_name, count(*) AS tenders, min(year) AS first_year, max(year) AS last_year,
+       count(*) FILTER (WHERE is_real) AS real_tenders,
+       array_agg(DISTINCT year ORDER BY year) AS years,
+       'eprocure-tenders/pages/<year>/' || org_id || '/<tender id>.json.gz' AS pages_path,
+       'eprocure-tenders/docs/<year>/' || org_id || '/<tender id>/<file>' AS docs_path
+FROM eprocure.tender_index GROUP BY org_id, org_code;
+CREATE INDEX org_index_code ON eprocure.org_index (org_code);
+CREATE INDEX org_index_id ON eprocure.org_index (org_id);
+CREATE INDEX org_index_name ON eprocure.org_index (lower(org_name) text_pattern_ops);
+GRANT SELECT ON eprocure.org_index TO scrape_hub;
+ANALYZE eprocure.org_index;
