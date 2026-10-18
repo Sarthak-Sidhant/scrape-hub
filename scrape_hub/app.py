@@ -582,7 +582,8 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
                RETURNING key, payload, attempts"""
         if not rows and body.steal and body.retry_failed and not settings["throttled"]:
             # every window has been tried once: try the failed ones again, but not while the target is down or being throttled
-            rows = c.execute(retry_sql, {**args, "max": RETRY_MAX_ATTEMPTS, "after": RETRY_AFTER_S}).fetchall()
+            after = int(settings["retry_after_s"]) if settings.get("retry_after_s") is not None else RETRY_AFTER_S   # per project (0 = at once)
+            rows = c.execute(retry_sql, {**args, "max": RETRY_MAX_ATTEMPTS, "after": after}).fetchall()
         counts = {r["status"]: r["n"] for r in c.execute(
             "SELECT status, count(*) AS n FROM queue WHERE project=%s AND status IN ('pending','claimed') GROUP BY status",
             (body.project,)).fetchall()}

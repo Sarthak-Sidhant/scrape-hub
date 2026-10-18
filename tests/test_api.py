@@ -770,3 +770,16 @@ def test_max_claimed_caps_items_in_flight_for_a_project(client, clean):
     assert b["items"] == [] and b["queue"]["pending"] >= 1                 # nothing more until one finishes, and the runner keeps waiting
     client.post(f"/api/v1/runs/{r1}/complete", headers=h, json={"keys": [a["items"][0]["key"]]})
     assert len(client.post(f"/api/v1/runs/{r2}/claim", headers=h, json={"project": "capped", "limit": 1, "steal": True}).json()["items"]) == 1
+
+
+def test_retry_after_s_setting_hands_failed_items_out_at_once(client, clean):
+    h = hdr()
+    client.post("/api/v1/projects/fastretry/queue", headers=h, json={"items": [{"key": "k1", "partition_id": 0}]})
+    rid = start(client, project="fastretry")
+    item = client.post(f"/api/v1/runs/{rid}/claim", headers=h, json={"project": "fastretry", "limit": 1}).json()["items"][0]
+    client.post(f"/api/v1/runs/{rid}/complete", headers=h, json={"keys": [item["key"]], "status": "failed", "error": "portal timed out"})
+    again = lambda: client.post(f"/api/v1/runs/{rid}/claim", headers=h, json={"project": "fastretry", "limit": 1, "steal": True, "retry_failed": True}).json()["items"]
+    assert again() == []                                                  # default: waits 3 minutes
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"retry_after_s": 0}' WHERE name='fastretry'""")
+    assert [i["key"] for i in again()] == ["k1"]
