@@ -41,7 +41,7 @@ tr.go{cursor:pointer}tr.go:hover td{background:var(--panel2)}
 </section>
 <section><h2>What was stored, and when the portal stopped answering</h2><div class="stats" id="stats"></div>
  <div class="wrap" id="wrap"><svg id="svg" role="img" aria-label="Tenders stored per minute over time, with portal outages shaded and launches marked"></svg><div class="tip" id="tip" hidden></div></div>
- <div class="lg"><span><i style="background:var(--s1);opacity:.55"></i>tenders stored per minute (all runners)</span><span><i style="background:var(--bad);opacity:.5"></i>portal down (3 or more failed checks in a row)</span><span><i style="background:var(--ok)"></i>portal check passed</span><span><i style="background:var(--bad)"></i>check failed</span></div>
+ <div class="lg"><span><i style="background:var(--s1);opacity:.55"></i>tenders stored per minute (all runners)</span><span><i style="background:var(--bad);opacity:.5"></i>portal down (3 or more failed checks in a row)</span><span><i style="background:var(--accent)"></i>GitHub Actions run up (bottom strip)</span><span><i style="background:var(--ok)"></i>portal check passed</span><span><i style="background:var(--bad)"></i>check failed</span></div>
 </section>
 <section><h2>Outages in view</h2><div id="outs"></div></section>
 <section><h2>Launches in view</h2><div id="runs"></div></section>
@@ -55,9 +55,9 @@ const fmtT=(t,long)=>{const d=new Date(t*1000);return d.toLocaleDateString([],{d
 const fmtN=n=>Math.round(n).toLocaleString();
 const PRESETS={"3h":3*3600,"12h":12*3600,"24h":24*3600,"3d":3*86400,"All":0};
 let D=null,view=[0,0],full=[0,0],preset="All",hoverX=null,brush=null;
-const W=1000,L=52,R=12,TOP=14,H1=250,GAP=34,H2=90,HT=TOP+H1+GAP+H2+30,pw=W-L-R;
+const W=1000,L=52,R=12,TOP=14,H1=250,GAP=34,H2=90,GAP3=26,H3=34,HT=TOP+H1+GAP+H2+GAP3+H3+28,pw=W-L-R;
 const X=t=>L+(t-view[0])/(view[1]-view[0])*pw, TX=x=>view[0]+(x-L)/pw*(view[1]-view[0]);
-const y1=(v,mx)=>TOP+H1-v/mx*H1, y2top=TOP+H1+GAP, y2=ms=>y2top+H2-Math.min(ms,20000)/20000*H2;
+const y1=(v,mx)=>TOP+H1-v/mx*H1, y2top=TOP+H1+GAP, y2=ms=>y2top+H2-Math.min(ms,20000)/20000*H2, y3top=y2top+H2+GAP3;
 
 function bucketSize(){const r=view[1]-view[0];return Math.max(60,Math.ceil(r/300/60)*60)}
 function aggregate(){
@@ -90,10 +90,16 @@ function draw(){
  if(lp)g+=`<polyline points="${lp}" fill="none" stroke="var(--ok)" stroke-width="1" opacity=".7"/>`;
  // time axis
  const span=view[1]-view[0],cands=[300,600,900,1800,3600,7200,10800,21600,43200,86400],step=cands.find(c=>span/c<=9)||86400;
- for(let t=Math.ceil(view[0]/step)*step;t<view[1];t+=step){const x=X(t);g+=`<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${TOP}" y2="${y2top+H2}" stroke="var(--line)" opacity=".35"/><text x="${x.toFixed(1)}" y="${HT-8}" text-anchor="middle" class="ax">${step>=86400||span>2*86400?fmtT(t):new Date(t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</text>`}
- if(hoverX!=null)g+=`<line x1="${hoverX}" x2="${hoverX}" y1="${TOP}" y2="${y2top+H2}" stroke="var(--text)" opacity=".6"/>`;
- if(brush)g+=`<rect x="${Math.min(brush[0],brush[1])}" y="${TOP}" width="${Math.abs(brush[1]-brush[0])}" height="${y2top+H2-TOP}" fill="var(--accent)" opacity=".18" stroke="var(--accent)"/>`;
- g+=`<rect id="hit" x="${L}" y="${TOP}" width="${pw}" height="${y2top+H2-TOP}" fill="transparent" style="cursor:crosshair"/>`;
+ for(let t=Math.ceil(view[0]/step)*step;t<view[1];t+=step){const x=X(t);g+=`<line x1="${x.toFixed(1)}" x2="${x.toFixed(1)}" y1="${TOP}" y2="${y3top+H3}" stroke="var(--line)" opacity=".35"/><text x="${x.toFixed(1)}" y="${HT-8}" text-anchor="middle" class="ax">${step>=86400||span>2*86400?fmtT(t):new Date(t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})}</text>`}
+ // third panel: when our GitHub Actions runs were up (bands), against the portal outages (red shading)
+ g+=`<text x="${L}" y="${y3top-8}" class="ax">GitHub Actions runs against the portal (darker = more processes; unlabelled gaps = nothing running)</text><rect x="${L}" y="${y3top}" width="${pw}" height="${H3}" fill="var(--line)" opacity=".25"/>`;
+ if($("tgOut").checked)for(const o of D.outages){const a=Math.max(o.start,view[0]),e=Math.min(o.end,view[1]);if(e>a)g+=`<rect x="${X(a).toFixed(1)}" y="${y3top}" width="${Math.max(1.5,X(e)-X(a)).toFixed(1)}" height="${H3}" fill="var(--bad)" opacity=".2"/>`}
+ for(const r of D.runs){const a=Math.max(r.start,view[0]),e=Math.min(r.stop,view[1]);if(e<=a)continue;const op=Math.min(.9,.25+r.procs/100);
+  g+=`<rect x="${X(a).toFixed(1)}" y="${y3top+4}" width="${Math.max(2,X(e)-X(a)).toFixed(1)}" height="${H3-8}" fill="var(--accent)" opacity="${op}"><title>${esc(r.project)}: ${r.procs} processes, ${fmtT(r.start)} to ${r.running?"now":fmtT(r.stop)}</title></rect>`;
+  if(X(e)-X(a)>34)g+=`<text x="${(X(a)+4).toFixed(1)}" y="${y3top+H3/2+3}" class="lab" style="fill:var(--bg)">${r.procs}</text>`}
+ if(hoverX!=null)g+=`<line x1="${hoverX}" x2="${hoverX}" y1="${TOP}" y2="${y3top+H3}" stroke="var(--text)" opacity=".6"/>`;
+ if(brush)g+=`<rect x="${Math.min(brush[0],brush[1])}" y="${TOP}" width="${Math.abs(brush[1]-brush[0])}" height="${y3top+H3-TOP}" fill="var(--accent)" opacity=".18" stroke="var(--accent)"/>`;
+ g+=`<rect id="hit" x="${L}" y="${TOP}" width="${pw}" height="${y3top+H3-TOP}" fill="transparent" style="cursor:crosshair"/>`;
  $("svg").setAttribute("viewBox",`0 0 ${W} ${HT}`);$("svg").innerHTML=g;
  $("span").textContent=fmtT(view[0])+"  to  "+fmtT(view[1])+"   ("+fmtDur(view[1]-view[0])+", "+Math.round(b/60)+" min per bar)";
  stats(A);lists();
@@ -102,7 +108,10 @@ function stats(A){
  const [a,e]=view;let total=0,peak=0,peakT=0;for(const [t,v] of D.rate)if(t>=a&&t<e)total+=v;A.rate.forEach((v,i)=>{if(A.t0+i*A.b>=a-A.b&&A.t0+i*A.b<e&&v>peak){peak=v;peakT=A.t0+i*A.b}});
  let down=0,n=0;for(const o of D.outages){const s=Math.max(o.start,a),f=Math.min(o.end,e);if(f>s){down+=f-s;n++}}
  const avg=total/Math.max(1,(e-a)/60);let mon=0;for(const [t] of D.checks)if(t>=a&&t<e)mon++;
+ const run=t=>D.runs.some(r=>r.start<=t&&r.stop>=t);let wn=0,wf=0,on=0,of=0;for(const [t,ok] of D.checks)if(t>=a&&t<e){if(run(t)){wn++;if(!ok)wf++}else{on++;if(!ok)of++}}
+ const pct=(f,n)=>n?Math.round(100*f/n)+"%":"-";
  $("stats").innerHTML=`<div><b>${fmtN(total)}</b><span>tenders stored in view</span></div><div><b>${fmtN(avg)}/min</b><span>average over the whole view</span></div><div><b>${fmtN(peak)}/min</b><span>best ${Math.round(A.b/60)}-minute stretch, ${peak?fmtT(peakT):"-"}</span></div>
+ <div><b class="${wf*on>of*wn?"bad":""}">${pct(wf,wn)} vs ${pct(of,on)}</b><span>portal checks failed while our Actions ran vs while nothing ran (${wn} and ${on} checks)</span></div>
  <div><b class="${down?"bad":"ok"}">${down?fmtDur(down):"none"}</b><span>${D.probe?`portal down in ${n} outage${n===1?"":"s"}${down?` (${(100*down/(e-a)).toFixed(0)}% of the view)`:""}`:"no portal check configured"}</span></div>`;
 }
 function lists(){

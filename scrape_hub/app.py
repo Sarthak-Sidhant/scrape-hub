@@ -1031,17 +1031,19 @@ def timeline(project: str = "", minutes: int = 10080):
                             WHERE project=%s AND at >= now() - make_interval(mins => %s) GROUP BY 1 ORDER BY 1""", (project, minutes)).fetchall()
         checks = c.execute("""SELECT extract(epoch FROM at)::float8 AS t, ok, ms FROM probes WHERE target=%s
                               AND at >= now() - make_interval(mins => %s) ORDER BY at""", (probe, minutes)).fetchall() if probe else []
-        runs = c.execute("""SELECT gh_run_id, workflow, extract(epoch FROM min(started_at))::float8 AS start,
+        # every workflow run that hits the same target (the real project and the experiments share the portal), not just this project's
+        runs = c.execute("""SELECT gh_run_id, project, workflow, extract(epoch FROM min(started_at))::float8 AS start,
                                    extract(epoch FROM max(coalesce(finished_at, last_seen)))::float8 AS stop, count(*)::int AS procs,
                                    coalesce(sum(records), 0)::bigint AS records, bool_or(state='running') AS running
-                            FROM runs WHERE project=%s AND started_at >= now() - make_interval(mins => %s) AND gh_run_id <> ''
-                            GROUP BY gh_run_id, workflow ORDER BY 3""", (project, minutes + 60)).fetchall()
+                            FROM runs WHERE (project=%s OR project IN (SELECT name FROM projects WHERE %s <> '' AND settings->>'probe' = %s))
+                              AND started_at >= now() - make_interval(mins => %s) AND gh_run_id <> ''
+                            GROUP BY gh_run_id, project, workflow ORDER BY 4""", (project, probe, probe, minutes + 60)).fetchall()
     outs = find_outages([(r["t"], r["ok"]) for r in checks]) if checks else []
     return JSONResponse(json.loads(json.dumps({
         "project": project, "projects": projects, "probe": probe, "minutes": minutes,
         "rate": [[r["t"], r["n"]] for r in rate], "checks": [[r["t"], r["ok"], r["ms"]] for r in checks],
         "outages": [{"start": a, "end": b, "going": g} for a, b, g in outs],
-        "runs": [{"id": r["gh_run_id"], "workflow": r["workflow"], "start": r["start"], "stop": r["stop"], "procs": r["procs"],
+        "runs": [{"id": r["gh_run_id"], "project": r["project"], "workflow": r["workflow"], "start": r["start"], "stop": r["stop"], "procs": r["procs"],
                   "records": r["records"], "running": r["running"]} for r in runs]}, default=_iso)))
 
 
