@@ -124,3 +124,21 @@ def test_archive_exports_whole_old_days_and_keeps_recent_rows(client, clean):
         data, n = arch.export_day(c, "probes", days[0])
         text = gzip.decompress(data).decode()
         assert n == 2 and text.splitlines()[0] == "target,at,ok,ms,detail" and text.count("gepnic:a") == 2
+
+
+def test_overview_sums_the_many_portal_scrape_into_one_card(client, clean, login):
+    with db.conn() as c:
+        c.execute("INSERT INTO projects (name, settings) VALUES ('gepnic-wbtenders', '{\"archived\": true}'), ('gepnic-wbtenders-plan', '{\"archived\": true}')")
+        c.execute("""INSERT INTO queue (project, key, partition_id, status, payload, fetched) VALUES
+            ('gepnic-wbtenders-plan', 'c1', 0, 'done', '{}', 900), ('gepnic-wbtenders-plan', 'c2', 0, 'pending', '{}', 0),
+            ('gepnic-wbtenders', 'w1', 0, 'done', '{"expected": 900}', 880), ('gepnic-wbtenders', 'w2', 0, 'pending', '{"expected": 300}', 0)""")
+        c.execute("""INSERT INTO runs (project, repository, gh_run_id, job_index, auth_kind, state) VALUES
+            ('gepnic-wbtenders', 'r/x', '1', 0, 'oidc', 'running'), ('gepnic-wbtenders-plan', 'r/x', '1', 1, 'oidc', 'running')""")
+        c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (1, 'gepnic-wbtenders', 'n_http', 300), (1, 'gepnic-wbtenders', 't_http_s', 450)")
+    ov = login.get("/api/overview").json()
+    g = ov["gepnic"]
+    assert ov["projects"] == [] and g["portals"] == 1 and g["running"] == 2 and g["counting_runs"] == 1 and g["crawling_runs"] == 1
+    assert g["count"] == {"done": 1, "open": 1, "failed": 0, "per_min": 0.0} and g["crawl"]["expected"] == 1200 and g["crawl"]["fetched"] == 880
+    assert ov["totals"]["running"] == 2
+    wb = login.get("/api/fleet").json()["servers"][0]["portals"][0]
+    assert wb["load"] == {"req_per_min": 20.0, "s_per_req": 1.5}

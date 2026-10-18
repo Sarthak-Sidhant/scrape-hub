@@ -18,7 +18,7 @@
 <div class="legend-st"><span class="st up">answering</span><span class="st slow">slow (3 s or more)</span><span class="st down">not answering</span><span class="st none">not checked yet</span></div></section>
 
 <section><div class="head"><div><h2>Every server</h2>
-<p class="lede">Checked from the hub once a minute (the real search page, not the static front page). <b>Capacity</b> is the most parallel workers the server took without slowing down in the latest ramp, in the Indian night and in the Indian daytime; "16+" means it never slowed down within the 16 we tried.</p></div>
+<p class="lede">Checked from the hub once a minute (the real search page, not the static front page). <b>Capacity</b> is the most parallel workers the server took without slowing down in the latest ramp, in the Indian night and in the Indian daytime; "16+" means it never slowed down within the 16 we tried; a server our own runners are scraping is skipped, so while we scrape, <b>Under our load now</b> shows how it answers our runners instead.</p></div>
 <div class="seg" id="sort" role="group" aria-label="sort servers"><button data-s="tenders" aria-pressed="true">Most tenders</button><button data-s="trouble" aria-pressed="false">Problems first</button><button data-s="speed" aria-pressed="false">Slowest</button></div></div>
 <div class="scroll"><table id="servers"></table></div>
 <p class="note" id="src"></p></section>
@@ -40,6 +40,8 @@ function capCell(c){if(!c)return'<span class="dim">no ramp yet</span>';
  if(c.note)return`<span class="dim" title="${esc(c.note)}">skipped</span>`;
  const lab=c.safe===0?"0":c.safe>=c.tested_max&&c.tested_max>=16?c.safe+"+":String(c.safe);
  return`<span class="cap"><b class="${c.safe===0?"bad":c.safe<8?"warn":""}">${lab}</b><small>${c.base_ms!=null?c.base_ms+" ms at 1 · ":""}${ago(c.at)} ago</small></span>`}
+function loadCell(x){const l=x.load;if(!l)return'<div class="dim">-</div>';
+ return`<div class="cap" title="our runners' requests to this portal in the last 15 minutes"><b class="${l.s_per_req>=5?"bad":l.s_per_req>=2?"warn":""}">${l.s_per_req.toFixed(1)} s</b><small>${fmt(Math.round(l.req_per_min))} requests/min</small></div>`}
 function progCell(x){
  if(x.scraped)return`<div class="cap"><b>${fmt(x.scraped)}</b><small>tenders stored</small></div>`;
  const g=x.progress;if(!g)return'<div class="dim">not started</div>';
@@ -72,7 +74,7 @@ function table(d){
  if(SORT==="trouble"){const o={down:0,slow:1,none:2,up:3};S.sort((a,b)=>o[srvState(a)]-o[srvState(b)]||(a.portals[0].uptime??1)-(b.portals[0].uptime??1))}
  if(SORT==="speed")S.sort((a,b)=>(b.portals[0].ms??-1)-(a.portals[0].ms??-1));
  const maxShare=Math.max(...d.servers.map(s=>s.share));
- document.getElementById("servers").innerHTML=`<tr><th class="n">#</th><th>Portal(s) · server</th><th>Tenders</th><th>Now</th><th>Last 24 h</th><th class="n">Uptime</th><th>Capacity: night</th><th>Capacity: day</th><th>Our scrape</th></tr>`+
+ document.getElementById("servers").innerHTML=`<tr><th class="n">#</th><th>Portal(s) · server</th><th>Tenders</th><th>Now</th><th>Last 24 h</th><th class="n">Uptime</th><th>Capacity: night</th><th>Capacity: day</th><th>Under our load now</th><th>Our scrape</th></tr>`+
  S.map(s=>{const p=s.portals[0],st=srvState(s);
   const who=s.portals.map(x=>`<div><span class="pname">${esc(x.title)}</span> <a class="dom" href="${esc(x.app_url)}" target="_blank" rel="noopener">${esc(x.portal)}</a>${x.ui==="gepnic2"?' <span class="warn" title="moved to the new GePNIC 2.0 interface; our crawler does not work there yet">2.0</span>':""}${x.scraped?` <span class="ok" title="tenders we hold from this portal">· ${fmt(x.scraped)} scraped</span>`:""}</div>`).join("");
   const ups=s.portals.filter(x=>x.uptime!=null),up=ups.length?ups.reduce((a,x)=>a+x.uptime,0)/ups.length:null;
@@ -80,7 +82,7 @@ function table(d){
   return`<tr class="srv"><td class="n dim">${rank.get(s.ip)}</td><td>${who}<div class="dom">${esc(s.ip)} · Tomcat ${esc(p.tomcat||"?")}</div></td>
    <td><div class="ib"><i style="width:${Math.max(1,s.share/maxShare*90)}px"></i><span>${fmt(s.tenders)}</span></div><span class="dim">${pct(s.share)}</span></td>
    <td>${now}</td><td>${strip(p.hours,24)}</td><td class="n ${up!=null&&up<.9?"warn":""}">${up!=null?pct(up):"-"}</td>
-   <td>${capCell(s.capacity.night)}</td><td>${capCell(s.capacity.day)}</td><td>${s.portals.map(progCell).join("")}</td></tr>`}).join("");
+   <td>${capCell(s.capacity.night)}</td><td>${capCell(s.capacity.day)}</td><td>${s.portals.map(loadCell).join("")}</td><td>${s.portals.map(progCell).join("")}</td></tr>`}).join("");
  document.getElementById("src").textContent="Sources: "+d.source+". Uptime is the share of minute checks that got the live search page.";}
 function minis(d){
  const S=d.servers.filter(s=>s.capacity.night||s.capacity.day).slice(0,18);

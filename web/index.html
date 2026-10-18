@@ -139,8 +139,8 @@ const dur=s=>s<90?s+"s":s<5400?Math.round(s/60)+"m":(s/3600).toFixed(1)+"h";
 async function j(u){const r=await fetch(u);if(r.status===401){location="/login";throw 0}if(!r.ok)throw new Error(u);return r.json()}
 
 function kpis(ov){
- const P=ov.projects,sum=f=>P.reduce((a,p)=>a+f(p),0);
- const rate=sum(p=>p.stats.rate_now),run=sum(p=>p.stats.running),stalled=sum(p=>p.stats.stalled),rec=sum(p=>p.records_total);
+ const P=ov.projects,sum=f=>P.reduce((a,p)=>a+f(p),0),T=ov.totals||{};
+ const rate=T.rate_now??sum(p=>p.stats.rate_now),run=T.running??sum(p=>p.stats.running),stalled=T.stalled??sum(p=>p.stats.stalled),rec=sum(p=>p.records_total)+((ov.gepnic||{}).stored||0);
  let done=0,tot=0;P.forEach(p=>{const q=p.stats.queue||{};Object.values(q).forEach(n=>tot+=n);done+=q.done||0});
  $("kpis").innerHTML=
   `<div class="kpi"><b>${rate.toFixed(0)}</b><span>records / min</span></div>
@@ -218,6 +218,15 @@ function projectCard(p,runs,d){
  ${prog}${bar}${slicesFor(p.project,runs)}${d?speedHtml(p.project,d):""}
  <ul class="rules">${p.rules.map(r=>`<li class="${r.level}"><span>${esc(r.message)}</span></li>`).join("")}</ul>${tail}</section>`}
 
+function gepnicCard(g){
+ if(!g||!(g.count.done+g.count.open+g.count.failed+g.crawl.done+g.crawl.open))return"";
+ const ct=g.count.done+g.count.open+g.count.failed,wt=g.crawl.done+g.crawl.open+g.crawl.failed,counting=g.count.open>0;
+ const bar=(d,o,f,t)=>`<div class="bar big">${[["done",d],["claimed",o],["failed",f]].map(([k,v])=>`<i class="${k}" style="width:${t?v/t*100:0}%"></i>`).join("")}</div>`;
+ const pc=g.crawl.expected?g.crawl.fetched/g.crawl.expected*100:0;
+ return `<section><div class="row"><h2 style="margin:0">GePNIC portals <span class="dim" style="text-transform:none;letter-spacing:0">(${g.portals} portals, one project each)</span></h2><span class="pill ${g.running?"healthy":"dim"}">${g.running?g.running+" runner processes":"idle"}</span></div>
+  <div class="prog"><span><b>Counting</b> ${fmt(g.count.done)} of ${fmt(ct)} count tasks${g.count.failed?` · <span class="warn">${fmt(g.count.failed)} failed (retried)</span>`:""}</span><span>${counting?`<b>${fmt(Math.round(g.count.per_min))}</b>/min · ${fmt(g.counting_runs)} counting`:"done"}</span></div>${bar(g.count.done,g.count.open,g.count.failed,ct)}
+  <div class="prog"><span><b>Crawling</b> ${fmt(g.crawl.fetched)} of ~${fmt(g.crawl.expected)} tenders <span class="dim">(${pc.toFixed(1)}%, ${fmt(g.crawl.done)} of ${fmt(wt)} windows)</span></span><span><b>${fmt(Math.round(g.rate_now))}</b>/min · ${fmt(g.crawling_runs)} crawling</span></div>${bar(g.crawl.done,g.crawl.open,g.crawl.failed,wt)}
+  <div class="dim" style="margin-top:8px">Per portal, with each server's status and capacity: <a href="/portals">Portals</a>. Speed is set per portal project; runners hold whenever their portal's own check fails.</div></section>`}
 const RANGES={"15m":{min:15,bucket:1},"1h":{min:60,bucket:1},"6h":{min:360,bucket:5},"24h":{min:1440,bucket:15}};
 let range="1h",cview="chart",chartCache=null,hoverI=null;
 const SERIES_VARS=["--s1","--s2","--s3","--s4","--s5","--s6"];
@@ -230,9 +239,11 @@ function buildChart(points,bucket,projects){
  // Colour follows the project (creation order), never its rank in this window; the tail past 6 folds into "other".
  const names=projects.map(p=>p.project),series=names.slice(0,6).map((nm,i)=>({key:nm,label:projects[i].title||nm,color:SERIES_VARS[i]}));
  if(names.length>6)series.push({key:"__other",label:"other",color:"--sx"});
+ if(points.some(p=>p.project.startsWith("gepnic-")&&!p.project.endsWith("-plan")))series.push({key:"__gepnic",label:"GePNIC portals (tenders)",color:SERIES_VARS[Math.min(series.length,5)]});
+ if(points.some(p=>p.project.endsWith("-plan")&&p.project.startsWith("gepnic-")))series.push({key:"__gcount",label:"GePNIC portals (counts)",color:SERIES_VARS[Math.min(series.length,5)]});
  const known=new Set(names.slice(0,6)),rows=[],idx={};
  for(let i=0;i<n;i++){const row={t:end-(n-1-i)*b,by:{},err:0,blk:0,total:0};rows.push(row);idx[row.t]=row}
- points.forEach(p=>{const row=idx[p.t];if(!row)return;const k=known.has(p.project)?p.project:"__other";
+ points.forEach(p=>{const row=idx[p.t];if(!row)return;const k=known.has(p.project)?p.project:p.project.startsWith("gepnic-")?(p.project.endsWith("-plan")?"__gcount":"__gepnic"):"__other";
   row.by[k]=(row.by[k]||0)+p.records/bucket;row.total+=p.records/bucket;row.err+=p.errors;row.blk+=p.blocked});
  return {rows,series,bucket,any:points.length>0};
 }
@@ -452,7 +463,7 @@ async function tick(){
   $("arch").innerHTML=ov.archived.length?`${ov.archived.length} archived project${ov.archived.length>1?"s":""} ${showArch?"shown":"hidden"} (${ov.archived.length>6?ov.archived.slice(0,4).map(esc).join(", ")+` and ${ov.archived.length-4} more; portal projects are on <a href="/portals">Portals</a>`:ov.archived.map(esc).join(", ")})<button class="act" id="archToggle">${showArch?"Hide them":"Show them"}</button>`:"";
   try{const pr=await j("/api/probes?minutes="+PR[prange].min);renderProbes(pr)}catch(e){}
   const det={};await Promise.all(ov.projects.map(async p=>{try{det[p.project]=await j("/api/projects/"+encodeURIComponent(p.project))}catch(e){}}));
-  $("projects").innerHTML=ov.projects.map(p=>projectCard(p,runs.runs,det[p.project])).join("")||'<section class="dim">No projects have reported yet.</section>';
+  $("projects").innerHTML=gepnicCard(ov.gepnic)+(ov.projects.map(p=>projectCard(p,runs.runs,det[p.project])).join("")||'<section class="dim">No projects have reported yet.</section>');
   lastOv=ov;chart(tp.points,tp.bucket||1,ov);runnerRows(runs.runs,past.runs[0]);histRows(past.runs);
   $("repos").innerHTML=ov.repos.map(r=>`<div class="chip">${esc(r.repository)}<span class="tag" title="${r.auth_kind==="oidc"?"identity verified by GitHub":"self-reported by the caller"}">${r.auth_kind==="oidc"?"verified":"self-reported"}</span><br><small class="dim">${r.running} running · ${r.runs} runs · ${fmt(r.records)} records · ${ago(r.last_seen)} ago</small></div>`).join("")||'<span class="dim">none yet</span>';
   $("ips").innerHTML='<tr><th>address</th><th>seen as</th><th class="n">runs</th><th class="n">repos</th><th class="n">records</th><th>last seen</th></tr>'+
