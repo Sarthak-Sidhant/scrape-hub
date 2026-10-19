@@ -1,0 +1,212 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Scrape hub</title><link rel="stylesheet" href="/assets/hub.css"><style>
+.live{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--ok);margin-right:6px;animation:pulse 2s infinite}
+.live.off{background:var(--bad);animation:none}@keyframes pulse{50%{opacity:.25}}
+.kpi small{display:block;color:var(--dim);font-size:11px;margin-top:2px}
+.meter{height:6px;background:var(--bar);border-radius:3px;overflow:hidden;margin:6px 0 2px}.meter i{display:block;height:100%;background:var(--s1);border-radius:3px}
+.meter i.warn{background:var(--warn)}.meter i.bad{background:var(--bad)}
+.host{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 14px;font-size:12px}.host b{font-size:15px}
+.fams{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:14px}
+.fam{cursor:pointer}.fam:hover{border-color:var(--accent)}.fam[aria-pressed=true]{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.fam .about{color:var(--dim);font-size:12px;margin:2px 0 10px}
+.bigbar{height:10px;background:var(--bar);border-radius:5px;overflow:hidden;display:flex;margin:8px 0 4px}.bigbar i{display:block;height:100%}
+.nums{display:flex;flex-wrap:wrap;gap:6px 22px;margin-top:8px}.nums b{display:block;font-size:17px;line-height:1.2}.nums span{color:var(--dim);font-size:11px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line);border-radius:99px;padding:1px 9px;font-size:12px;background:var(--panel2)}
+.chip::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
+.s-running{color:var(--ok)}.s-slow{color:var(--warn)}.s-down{color:var(--bad)}.s-done{color:var(--accent)}.s-parked,.s-idle{color:var(--dim)}
+.chip span{color:var(--text)}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-bottom:12px}.ctrl .lab{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,232px),1fr));gap:10px}
+.t{border:1px solid var(--line);border-radius:10px;padding:9px 11px 8px;background:var(--panel2);cursor:pointer;text-align:left;font:inherit;color:inherit;min-width:0}
+.t:hover{border-color:var(--accent)}.t[aria-expanded=true]{border-color:var(--accent)}
+.t .top{display:flex;justify-content:space-between;gap:8px;align-items:baseline}.t .nm{font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.t .pc{font-variant-numeric:tabular-nums;font-weight:700}
+.t .stl{font-size:11px;font-weight:600;white-space:nowrap}.t .stl::before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:currentColor;margin-right:5px}
+.t .pb{height:5px;background:var(--bar);border-radius:3px;overflow:hidden;margin:6px 0 5px;display:flex}.t .pb i{display:block;height:100%}
+.t .ln{display:flex;justify-content:space-between;gap:8px;font-size:12px}.t .ln .dim{font-size:11px}
+.t svg.sp{height:20px;margin-top:5px}
+.t.parked,.t.done{opacity:.78}
+.detail{grid-column:1/-1;border:1px solid var(--accent);border-radius:10px;padding:12px 14px;background:var(--panel)}
+.detail .dg{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px 18px;margin-top:8px}.detail .dg b{display:block;font-size:15px}.detail .dg span{color:var(--dim);font-size:11px}
+.detail .why{margin-top:10px;font-size:12px;color:var(--dim)}.detail .why b{color:var(--text);font-weight:600}
+.left .lr{display:grid;grid-template-columns:minmax(90px,170px) minmax(0,1fr) 92px;gap:10px;align-items:center;padding:3px 0;font-size:12px}
+.left .lr .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.left .lr .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.left .track{height:12px;position:relative}.left .track i{position:absolute;left:0;top:0;bottom:0;border-radius:0 3px 3px 0}
+.log td{white-space:nowrap}.log td.r{white-space:normal;color:var(--dim)}.log .up{color:var(--ok)}.log .dn{color:var(--bad)}
+.empty{color:var(--dim);font-size:12px;padding:8px 0}
+.more{margin-top:12px;font-size:12px;color:var(--dim)}
+@media (max-width:700px){.left .lr{grid-template-columns:96px minmax(0,1fr) 70px}.left .lr .n .dim{display:none}.host{grid-template-columns:1fr}header .sp{display:none}header>span.dim{flex:1 1 100%;font-size:11px}}
+@media (prefers-reduced-motion:reduce){.live{animation:none}}
+</style></head><body>
+<header><h1>SCRAPE HUB</h1><!--NAV--><span class="sp"></span><span class="dim"><span id="dot" class="live"></span><span id="updated">connecting</span></span></header>
+<main>
+<div class="kpis" id="kpis"></div>
+
+<div class="fams" id="fams"></div>
+
+<section id="srcsec"><div class="head"><div><h2 id="srctitle">Every source</h2>
+<p class="lede">One tile per site we scrape. The bar is how much of what the counts found is saved (for GePNIC: saved with their documents, or with none to fetch); the strip under it is what was saved every 10 minutes over the last 6 hours. Click a tile for its details.</p></div></div>
+<div class="ctrl"><span class="lab">Show</span><div class="seg" id="fstat" role="group" aria-label="filter by status"></div>
+<span class="lab">Sort</span><div class="seg" id="fsort" role="group" aria-label="sort sources"></div></div>
+<div class="tiles" id="tiles"></div></section>
+
+<div class="grid2">
+<section id="ratesec"><div class="head"><div><h2>Saved per minute, by source</h2><p class="lede">The six busiest sources over the last hour in colour; everything else in grey.</p></div>
+<div style="display:flex;gap:8px;flex-wrap:wrap"><div class="seg" id="rrange" role="group" aria-label="time range"></div><div class="seg view"></div></div></div>
+<div class="chart" id="rate"></div></section>
+<section><div class="head"><div><h2>Time left per source</h2><p class="lede">Tenders still to save, longest first, at each source's rate over the last hour. The crawl ends when the top bar does.</p></div></div>
+<div class="left" id="left"></div></section>
+</div>
+
+<section><div class="head"><div><h2>Throttle log</h2><p class="lede">Every minute the hub sets each source's threads and windows in flight from how it answers; caps go up after 10 healthy minutes at the ceiling and down when a source chokes or falls over.</p></div>
+<div class="seg" id="logf" role="group" aria-label="log filter"><button data-c="1" aria-pressed="true">Cap changes</button><button data-c="0" aria-pressed="false">Everything</button></div></div>
+<div class="scroll"><table class="log" id="log"></table></div></section>
+
+<p class="more">Per-project queues, speed controls, runs, history and runner IPs: <a href="/runs">Runs</a> · every GePNIC server with uptime and capacity: <a href="/portals">Portals</a> · what the data says: <a href="/data">Data</a></p>
+</main>
+<script src="/assets/charts.js"></script>
+<script>
+const {esc,fmt,compact,pct,ago,j}=Hub;
+const $=id=>document.getElementById(id);
+const STATUS={running:"scraping",slow:"slow",down:"down",done:"done",parked:"parked",idle:"idle"};
+const ORDER={down:0,slow:1,running:2,idle:3,parked:4,done:5};
+const dur=s=>{if(s==null)return"-";const m=s/60;return m<90?Math.round(m)+" min":m<2880?(m/60).toFixed(m<600?1:0)+" h":(m/1440).toFixed(1)+" days"};
+const bytes=b=>b==null?"-":b>=1e12?(b/1e12).toFixed(2)+" TB":b>=1e9?(b/1e9).toFixed(b>=1e11?0:1)+" GB":(b/1e6).toFixed(0)+" MB";
+const store=(k,v)=>{try{v===undefined?null:localStorage.setItem("hub."+k,v)}catch(e){}};
+const load=(k,d)=>{try{return localStorage.getItem("hub."+k)??d}catch(e){return d}};
+let D=null,FAM=load("fam",""),STAT=load("stat","all"),SORT=load("sort","eta"),OPEN=null,RANGE=load("range","6h"),CAPS=true;
+
+function kpis(d){
+ const T=d.totals,H=d.host,acc=Object.entries(T.runners),procs=acc.reduce((a,[,n])=>a+n,0);
+ const down=d.sources.filter(s=>s.status==="down").map(s=>s.title);
+ const df=H.disk_free/H.disk_total,dcls=H.disk_free<15e9?"bad":H.disk_free<30e9?"warn":"";
+ const lcls=H.load1>H.cpus*2?"bad":H.load1>H.cpus*1.3?"warn":"";
+ const used=1-(H.mem_avail||0)/(H.mem_total||1),mcls=H.mem_avail<1.5e9?"bad":H.mem_avail<3e9?"warn":"";
+ const withDocs=d.families.filter(f=>f.docs_since).reduce((a,f)=>a+f.saved,0);
+ $("kpis").innerHTML=
+ `<div class="kpi"><b>${fmt(Math.round(T.rate_5m))}</b><span>saved per minute, last 5 min</span><small>${fmt(Math.round(T.rate_10m))}/min over 10 min</small></div>
+  <div class="kpi"><b>${compact(T.records)}</b><span>records on the hub</span><small>${withDocs?fmt(withDocs)+" GePNIC tenders with their documents":""}</small></div>
+  <div class="kpi"><b class="${down.length?"warn":"ok"}">${T.sources_up} / ${T.sources_checked}</b><span>sources answering now</span><small>${down.length?"down: "+esc(down.join(", ")):"all up"}</small></div>
+  <div class="kpi"><b>${fmt(procs)}</b><span>runner processes</span><small>${acc.map(([a,n])=>esc(a)+" "+n).join(" · ")||"none running"}</small></div>
+  <div class="kpi"><span>hub machine</span><div class="host">
+   <div><b class="${dcls}">${bytes(H.disk_free)}</b> <span class="dim">disk free</span><div class="meter" title="${pct(1-df,0)} of ${bytes(H.disk_total)} used"><i class="${dcls}" style="width:${(1-df)*100}%"></i></div></div>
+   <div><b class="${lcls}">${H.load1.toFixed(1)}</b> <span class="dim">load, ${H.cpus} cores</span><div class="meter"><i class="${lcls}" style="width:${Math.min(100,H.load1/H.cpus/2*100)}%"></i></div></div>
+   <div><b class="${mcls}">${bytes(H.mem_avail)}</b> <span class="dim">memory free</span><div class="meter"><i class="${mcls}" style="width:${used*100}%"></i></div></div>
+   <div><b>${bytes(H.db_bytes)}</b> <span class="dim">database</span></div></div></div>`}
+
+function chips(st){return Object.keys(ORDER).filter(k=>st[k]).map(k=>`<span class="chip s-${k}"><span>${st[k]} ${STATUS[k]}</span></span>`).join("")}
+function fams(d){
+ $("fams").innerHTML=d.families.map(f=>{
+  const p=f.target?Math.min(1,f.saved/f.target):0,u=f.unit,live=f.rate_10m>0;
+  const slow=d.sources.filter(s=>s.family===f.family&&s.eta_s).sort((a,b)=>b.eta_s-a.eta_s)[0];
+  return `<section class="fam" role="button" tabindex="0" data-fam="${esc(f.family)}" aria-pressed="${FAM===f.family}">
+  <div class="row" style="display:flex;justify-content:space-between;gap:8px"><h2 style="margin:0">${esc(f.title)} <span class="dim" style="text-transform:none;letter-spacing:0">· ${f.sources} source${f.sources>1?"s":""}</span></h2>
+  <span class="st ${live?"up":"none"}">${live?"scraping":f.left?"waiting":"finished"}</span></div>
+  <div class="about">${esc(f.about)}</div>
+  <div class="bigbar" role="img" aria-label="${pct(p)} saved"><i style="width:${p*100}%;background:var(--ok)"></i></div>
+  <div class="nums"><div><b>${pct(p)}</b><span>${fmt(f.saved)} of ${fmt(f.target)} ${u}s${f.docs_since?" with their documents":""}</span></div>
+   <div><b>${fmt(Math.round(f.rate_10m))}</b><span>${u}s per minute</span></div>
+   ${f.left?`<div><b>${dur(f.eta_s)}</b><span>if every source kept the pace</span></div>`:""}
+   ${slow?`<div><b>${dur(slow.eta_s)}</b><span>until the last source, ${esc(slow.title)}</span></div>`:""}
+   ${f.parked?`<div><b>${fmt(f.parked)}</b><span>${u}s parked (not scraped)</span></div>`:""}</div>
+  <div class="chips">${chips(f.status)}</div></section>`}).join("")}
+
+const STATS=[["all","All"],["active","Scraping"],["problems","Problems"],["done","Done"],["parked","Parked"]];
+const SORTS=[["eta","Time left"],["left","Most left"],["rate","Fastest"],["name","Name"]];
+function seg(el,items,cur,key,cb){el.innerHTML=items.map(([k,l])=>`<button data-k="${k}" aria-pressed="${k===cur}">${l}</button>`).join("");
+ el.onclick=e=>{const b=e.target.closest("[data-k]");if(!b)return;el.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x===b));store(key,b.dataset.k);cb(b.dataset.k)}}
+function visible(d){
+ let S=d.sources.filter(s=>!FAM||s.family===FAM);
+ S=S.filter(s=>STAT==="all"||(STAT==="active"&&["running","slow"].includes(s.status))||(STAT==="problems"&&["down","slow"].includes(s.status))||s.status===STAT);
+ const by={eta:(a,b)=>(b.eta_s??-1)-(a.eta_s??-1)||ORDER[a.status]-ORDER[b.status]||b.left-a.left,left:(a,b)=>b.left-a.left,rate:(a,b)=>b.rate_10m-a.rate_10m,name:(a,b)=>a.title.localeCompare(b.title)};
+ return S.sort(by[SORT])}
+function spark(v,status){const n=v.length,mx=Math.max(1,...v),W=200,H=20,w=W/n;
+ return `<svg class="sp" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${v.map((x,i)=>x?`<rect x="${(i*w+.5).toFixed(1)}" y="${(H-Math.max(1.5,x/mx*H)).toFixed(1)}" width="${(w-1).toFixed(1)}" height="${Math.max(1.5,x/mx*H).toFixed(1)}" rx="1" fill="var(${status==="down"?"--bad":"--s1"})" opacity="${status==="parked"||status==="done"?.5:.9}"/>`:"").join("")}</svg>`}
+function tile(s){
+ const p=s.target?Math.min(1,s.saved/s.target):(s.status==="done"?1:0),th=s.throttle;
+ const right=s.status==="done"?"finished":s.status==="parked"?`${fmt(s.parked)} parked`:s.status==="down"?(s.probe&&s.probe.at?"since check "+ago(s.probe.at)+" ago":"not answering"):s.eta_s?"~"+dur(s.eta_s)+" left":"-";
+ return `<button class="t ${s.status}" data-src="${esc(s.family+"/"+s.source)}" aria-expanded="${OPEN===s.family+"/"+s.source}">
+  <div class="top"><span class="nm" title="${esc(s.title)}">${esc(s.title)}</span><span class="pc">${pct(p,0)}</span></div>
+  <div class="pb"><i style="width:${p*100}%;background:var(${s.status==="down"?"--bad":s.status==="slow"?"--warn":s.status==="done"?"--accent":"--ok"})"></i></div>
+  <div class="ln"><span class="stl s-${s.status}">${STATUS[s.status]}${s.rate_10m?` · ${fmt(Math.round(s.rate_10m))}/min`:""}</span><span class="dim">${esc(right)}</span></div>
+  ${spark(s.spark,s.status)}
+  <div class="ln"><span class="dim">${fmt(s.saved)} of ${compact(s.target)}</span><span class="dim">${th&&th.windows!=null?`${th.windows}×${th.threads} · cap ${th.cap??"-"}`:""}</span></div></button>`}
+function detail(s){
+ const w=s.windows||{},l=s.load,pr=s.probe,lc=s.last_change;
+ return `<div class="detail" id="det"><div style="display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap"><b>${esc(s.title)}</b>
+  <span>${s.url?`<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.site)}</a> · `:""}<a href="/portals">all servers</a> · <a href="/tender">tender lookup</a></span></div>
+  <div class="dg">
+   <div><b>${fmt(s.saved)}</b><span>saved${s.records!==s.saved?` (${fmt(s.records)} records in all)`:""}</span></div>
+   <div><b>${fmt(s.left)}</b><span>still to save of ${fmt(s.target)}</span></div>
+   <div><b>${fmt(Math.round(s.rate_10m))} / ${fmt(Math.round(s.rate_60m))}</b><span>per minute, 10 min / 1 hour</span></div>
+   <div><b>${pr?(pr.ok?pr.ms+" ms":"not answering"):"-"}</b><span>hub's check${pr?" "+ago(pr.at)+" ago":""}${s.uptime_24h!=null?` · ${pct(s.uptime_24h)} up in 24 h`:""}</span></div>
+   <div><b>${l?l.s_per_req.toFixed(2)+" s":"-"}</b><span>per request to our runners${l?` · ${fmt(Math.round(l.req_per_min))}/min, ${pct(l.dropped)} dropped`:""}</span></div>
+   <div><b>${fmt(w.done||0)} · ${fmt((w.pending||0)+(w.claimed||0))} · ${fmt(w.failed||0)}</b><span>windows done · open · failed${w.parked?` · ${fmt(w.parked)} parked`:""}</span></div>
+   <div><b>${s.throttle&&s.throttle.windows!=null?`${s.throttle.windows} × ${s.throttle.threads}`:"-"}</b><span>windows × threads now${s.throttle&&s.throttle.cap?`, cap ${s.throttle.cap}`:""}</span></div>
+   <div><b>${Object.entries(s.runners).map(([a,n])=>n).reduce((a,b)=>a+b,0)||"none"}</b><span>runner processes${Object.keys(s.runners).length?" ("+Object.entries(s.runners).map(([a,n])=>esc(a)+" "+n).join(", ")+")":""}</span></div></div>
+  ${lc?`<div class="why">Last throttle change ${ago(lc.at)} ago: <b>${esc(lc.reason)}</b></div>`:""}
+  ${pr&&!pr.ok&&pr.detail?`<div class="why">Check said: ${esc(pr.detail)}</div>`:""}</div>`}
+function tiles(d){
+ const S=visible(d),fam=d.families.find(f=>f.family===FAM);
+ $("srctitle").textContent=(fam?fam.title+": ":"")+"every source ("+S.length+")";
+ if(!S.length){$("tiles").innerHTML='<div class="empty">Nothing matches this filter.</div>';return}
+ let h="",cols=Math.max(1,Math.floor(($("tiles").clientWidth+10)/242)),open=S.findIndex(s=>s.family+"/"+s.source===OPEN);
+ S.forEach((s,i)=>{h+=tile(s);if(open>=0&&(i===S.length-1||i%cols===cols-1)&&Math.floor(i/cols)===Math.floor(open/cols))h+=detail(S[open])});
+ $("tiles").innerHTML=h}
+$("tiles").addEventListener("click",e=>{const t=e.target.closest(".t");if(!t)return;OPEN=OPEN===t.dataset.src?null:t.dataset.src;tiles(D)});
+$("fams").addEventListener("click",e=>{const f=e.target.closest(".fam");if(!f)return;FAM=FAM===f.dataset.fam?"":f.dataset.fam;store("fam",FAM);fams(D);tiles(D);leftChart(D);rateChart()});
+$("fams").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();e.target.closest(".fam")?.click()}});
+
+function leftChart(d){
+ const S=d.sources.filter(s=>(!FAM||s.family===FAM)&&s.left>0&&s.eta_s&&!["parked","done"].includes(s.status)).sort((a,b)=>b.eta_s-a.eta_s).slice(0,16);
+ if(!S.length){$("left").innerHTML='<div class="empty">Nothing left to save.</div>';return}
+ const mx=S[0].eta_s;
+ $("left").innerHTML=S.map(s=>`<div class="lr" title="${esc(s.title)}: ${fmt(s.left)} left at ${fmt(Math.round(s.rate_60m))}/min over the last hour"><span class="nm">${esc(s.title)}</span>
+  <span class="track"><i style="width:${Math.max(1,s.eta_s/mx*100)}%;background:var(${s.status==="down"?"--bad":s.status==="slow"?"--warn":"--s1"})"></i></span><span class="n">${dur(s.eta_s)} <span class="dim">${compact(s.left)}</span></span></div>`).join("")+
+  `<div class="note">${S.length} of ${d.sources.filter(s=>(!FAM||s.family===FAM)&&s.left>0&&!["parked","done"].includes(s.status)).length} sources with work left; red is down right now, amber slow.</div>`}
+
+const RANGES={"1h":[60,1],"6h":[360,10],"24h":[1440,30]};
+let RATE=null;
+async function rateChart(){
+ if(!D)return;const [m,b]=RANGES[RANGE];
+ try{RATE=await j(`/api/throughput?minutes=${m}&bucket=${b}`)}catch(e){return}
+ const proj={};D.sources.forEach(s=>Object.entries(s.stages).forEach(([st,v])=>{if(st!=="count"&&!st.endsWith("plan"))proj[v.project]=s}));
+ // the six busiest sources over the last hour get a colour, in a fixed order (by size) so a colour stays with its source between refreshes
+ const big=D.sources.filter(s=>(!FAM||s.family===FAM)&&s.rate_60m>0).sort((a,b)=>b.rate_60m-a.rate_60m).slice(0,6).sort((a,b)=>b.target-a.target);
+ const series=big.map((s,i)=>({key:s.family+"/"+s.source,label:s.title,color:"--s"+(i+1)})).concat([{key:"__other",label:"everything else",color:"--sx"}]);
+ const keys=new Set(series.map(s=>s.key)),B=b*60,end=Math.floor(Date.now()/1000/B)*B,n=Math.round(m/b),rows=[];
+ for(let i=0;i<n;i++)rows.push({t:end-(n-1-i)*B,v:{}});const idx=new Map(rows.map(r=>[r.t,r]));
+ RATE.points.forEach(p=>{const s=proj[p.project];if(!s||(FAM&&s.family!==FAM))return;const r=idx.get(p.t);if(!r)return;
+  const k=keys.has(s.family+"/"+s.source)?s.family+"/"+s.source:"__other";r.v[k]=(r.v[k]||0)+p.records/b});
+ RC={rows,series,b,B};
+ if(!RV){RV=true;Hub.view($("ratesec"),$("rate"),drawRate,rateTable)}else if(RMODE()==="chart")drawRate();else $("rate").innerHTML=`<div class="tblwrap">${rateTable()}</div>`}
+let RC=null,RV=false;
+const RMODE=()=>($("ratesec").querySelector('.seg.view [aria-pressed=true]')||{dataset:{m:"chart"}}).dataset.m;
+const lab=t=>new Date(t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+function drawRate(){if(!RC)return;const {rows,series,b,B}=RC,el=$("rate");
+ Hub.bars(el,{labels:rows.map(r=>lab(r.t)),series,values:(i,k)=>rows[i].v[k]||0,height:250,aria:"saved per minute by source",
+  tipHead:(l,i)=>`${l}${b>1?" – "+lab(rows[i].t+B):""} · per minute`,tipFmt:v=>fmt(Math.round(v))})}
+function rateTable(){if(!RC)return"";const {rows,series,b}=RC;
+ return `<table><tr><th>${b>1?b+" min from":"minute"}</th>${series.map(s=>`<th class="n">${esc(s.label)}</th>`).join("")}</tr>${rows.slice().reverse().map(r=>`<tr><td>${lab(r.t)}</td>${series.map(s=>`<td class="n">${fmt(Math.round(r.v[s.key]||0))}</td>`).join("")}</tr>`).join("")}</table>`}
+
+async function log(){
+ let L;try{L=await j(`/api/adjustments?limit=40&caps=${CAPS?1:0}`)}catch(e){return}
+ const title=k=>{const s=D&&D.sources.find(x=>x.family+"/"+x.source===k);return s?s.title:k.split("/")[1]};
+ $("log").innerHTML=`<tr><th>when</th><th>source</th><th>change</th><th>why</th></tr>`+(L.items.length?L.items.map(a=>{
+  const m=/window cap (\d+) -> (\d+)/.exec(a.reason)||/restored to (\d+)/.exec(a.reason);
+  let ch=m&&m[2]?`cap ${m[1]} → <b class="${+m[2]>+m[1]?"up":"dn"}">${m[2]}</b>`:m?`cap → <b>${m[1]}</b>`:`${a.windows[0]??"?"}→${a.windows[1]??"?"} windows, ${a.threads[0]??"?"}→${a.threads[1]??"?"} threads`;
+  return `<tr><td class="dim">${ago(a.at)} ago</td><td>${esc(title(a.family+"/"+a.source))}${a.stage==="count"?' <span class="dim">(count)</span>':""}</td><td>${ch}</td><td class="r">${esc(a.reason)}</td></tr>`}).join(""):`<tr><td colspan="4" class="dim">No changes yet.</td></tr>`)}
+$("logf").onclick=e=>{const b=e.target.closest("[data-c]");if(!b)return;CAPS=b.dataset.c==="1";$("logf").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x===b));log()};
+
+async function tick(){
+ try{D=await j("/api/scrapes");kpis(D);fams(D);tiles(D);leftChart(D);
+  $("dot").className="live";$("updated").textContent="updated "+new Date().toLocaleTimeString()}
+ catch(e){if(e!==0){$("dot").className="live off";$("updated").textContent="update failed, retrying"}}}
+seg($("fstat"),STATS,STAT,"stat",k=>{STAT=k;tiles(D)});
+seg($("fsort"),SORTS,SORT,"sort",k=>{SORT=k;tiles(D)});
+seg($("rrange"),Object.keys(RANGES).map(k=>[k,k]),RANGE,"range",k=>{RANGE=k;rateChart()});
+let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D)tiles(D)},150)});
+tick().then(()=>{rateChart();log()});
+setInterval(tick,15000);setInterval(rateChart,60000);setInterval(log,30000);
+</script></body></html>

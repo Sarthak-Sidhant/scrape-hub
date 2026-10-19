@@ -964,3 +964,29 @@ def test_a_fast_portal_at_its_ceiling_earns_a_higher_one(client, clean):
     assert st["adaptive"]["max_windows"] == 34 and st["adaptive"]["healthy_min"] == 0     # 10 healthy minutes: +2
     st = _adapt_once("fast", {**st, "max_claimed": CAP_CEILING, "adaptive": {"max_windows": CAP_CEILING, "healthy_min": 9}}, 200, 100, 20)
     assert st["adaptive"]["max_windows"] == CAP_CEILING                          # never above the ceiling
+
+
+def test_projects_fall_into_families_and_sources():
+    from scrape_hub.scrapes import place
+    assert place("gepnic-wbtenders", {}) == ("gepnic", "wbtenders", "crawl")
+    assert place("gepnic-wbtenders-plan", {}) == ("gepnic", "wbtenders", "count")
+    assert place("eprocure-tenders", {}) == ("eprocure", "eprocure", "tenders")
+    assert place("solo", None) == ("solo", "solo", "main")
+    assert place("whatever-x", {"family": "gem", "source": "gem.gov.in", "stage": "crawl"}) == ("gem", "gem.gov.in", "crawl")
+
+
+def test_scrapes_overview_groups_sources_and_reports_the_host(client, clean, login):
+    from scrape_hub import scrapes
+    scrapes._cache["data"], scrapes._slow["at"] = None, 0
+    rid = start(client, project="gepnic-testportal")
+    client.post(f"/api/v1/runs/{rid}/batches", headers=hdr(), json={"records": [{"record_id": "T1", "data": {"details": {}}}]})
+    start(client, project="gepnic-testportal-plan")
+    start(client, project="newscrape")
+    d = client.get("/api/scrapes").json()
+    fams = {f["family"]: f for f in d["families"]}
+    assert fams["gepnic"]["sources"] == 1 and "newscrape" in fams          # a new project shows up as its own family
+    src = next(s for s in d["sources"] if s["source"] == "testportal")
+    assert set(src["stages"]) == {"crawl", "count"} and src["stages"]["crawl"]["records"] == 1
+    assert d["host"]["disk_total"] > 0 and d["host"]["cpus"] >= 1
+    assert client.get("/api/adjustments?caps=1").json() == {"items": []}
+    assert client.get("/").status_code == 200 and client.get("/runs").status_code == 200

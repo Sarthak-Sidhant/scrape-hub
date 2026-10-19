@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
-from . import config, dash_auth, db, fleet, health, metabase
+from . import config, dash_auth, db, fleet, health, metabase, scrapes
 from .auth import Caller, caller, client_ip
 
 def _iso(v):
@@ -830,7 +830,7 @@ def need_login(request: Request):
         raise HTTPException(401, "login required")
 
 
-NAV = [("/", "Overview"), ("/portals", "Portals"), ("/data", "Data"), ("/explore", "Rate explorer"), ("/tender", "Tender lookup")]
+NAV = [("/", "Overview"), ("/portals", "Portals"), ("/data", "Data"), ("/runs", "Runs"), ("/explore", "Rate explorer"), ("/tender", "Tender lookup")]
 
 
 def page(name: str, current: str = "") -> str:
@@ -878,7 +878,29 @@ def logout():
 def index(request: Request):
     if not logged_in(request):
         return RedirectResponse("/login", 303)
-    return page("index.html", "/")
+    return page("overview.html", "/")
+
+
+@app.get("/runs", response_class=HTMLResponse)
+def runs_page(request: Request):
+    """The original single-project dashboard: every project's queue, speed controls, runs, history, repositories and runner IPs."""
+    if not logged_in(request):
+        return RedirectResponse("/login", 303)
+    return page("index.html", "/runs")
+
+
+@app.get("/api/scrapes", dependencies=[Depends(need_login)])
+def scrapes_api():
+    """Every scrape as families of sources (see scrape_hub/scrapes.py), with the hub machine's own limits."""
+    with db.conn() as c:
+        return JSONResponse(json.loads(json.dumps(scrapes.cached(c), default=_iso)))
+
+
+@app.get("/api/adjustments", dependencies=[Depends(need_login)])
+def adjustments_api(limit: int = 60, caps: bool = False):
+    """The automatic throttle's latest decisions across all projects, newest first; caps=1 keeps only window-cap changes."""
+    with db.conn() as c:
+        return JSONResponse(json.loads(json.dumps({"items": scrapes.adjustments(c, max(1, min(limit, 300)), caps)}, default=_iso)))
 
 
 @app.get("/explore", response_class=HTMLResponse)
