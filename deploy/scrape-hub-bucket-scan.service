@@ -1,0 +1,13 @@
+[Unit]
+Description=List the hub's buckets (B2, R2) and record their size per prefix for the overview's storage and cost section
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=scrapehub
+WorkingDirectory=/opt/scrape-hub
+EnvironmentFile=/etc/scrape-hub/env
+ExecStart=/opt/scrape-hub/.venv/bin/python scripts/bucket_scan.py
+TimeoutStartSec=6h
+Nice=10
+NoNewPrivileges=true

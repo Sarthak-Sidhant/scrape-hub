@@ -990,3 +990,20 @@ def test_scrapes_overview_groups_sources_and_reports_the_host(client, clean, log
     assert d["host"]["disk_total"] > 0 and d["host"]["cpus"] >= 1
     assert client.get("/api/adjustments?caps=1").json() == {"items": []}
     assert client.get("/").status_code == 200 and client.get("/runs").status_code == 200
+
+
+def test_storage_samples_sizes_rolls_up_uploads_and_reports(client, clean, login):
+    from scrape_hub import storage
+    rid = start(client, project="sized")
+    with db.conn() as c:
+        c.execute("UPDATE projects SET settings = settings || '{\"storage\": \"b2\"}' WHERE name='sized'")
+        c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,'sized','uploaded_bytes',5e6), (%s,'sized','uploaded_files',5)", (rid, rid))
+    with db.conn() as c:
+        storage.tick(c)
+    with db.conn() as c:
+        storage.tick(c)                                   # a second tick within 10 minutes adds no second sample
+        assert c.execute("SELECT count(*) AS n FROM sizes WHERE what='db'").fetchone()["n"] == 1
+        led = c.execute("SELECT store, bytes, files FROM upload_ledger WHERE project='sized'").fetchone()
+    assert (led["store"], led["bytes"], led["files"]) == ("b2", 5000000, 5)
+    r = client.get("/api/storage").json()
+    assert r["database"]["bytes"] > 0 and r["database"]["disk_total"] > 0

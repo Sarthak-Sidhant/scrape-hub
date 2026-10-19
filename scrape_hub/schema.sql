@@ -173,3 +173,32 @@ ALTER TABLE adjustments ADD COLUMN IF NOT EXISTS claimed_from INT;
 ALTER TABLE adjustments ADD COLUMN IF NOT EXISTS claimed_to   INT;
 ALTER TABLE adjustments ADD COLUMN IF NOT EXISTS phase        TEXT NOT NULL DEFAULT '';
 ALTER TABLE adjustments ADD COLUMN IF NOT EXISTS failed_frac  DOUBLE PRECISION;
+
+-- records saved without their documents (being redone), counted per project by the overview. On a big live table, build it by hand
+-- first with CREATE INDEX CONCURRENTLY (done 2026-10-20) so this line is a no-op.
+CREATE INDEX IF NOT EXISTS records_missing_docs ON records (project) WHERE coalesce(data->'details'->'documents', '[]'::jsonb) @> '[{"status": "not_stored"}]'::jsonb;
+
+-- storage over time, for "when do I need a bigger disk" and "what will object storage cost" (scrape_hub/storage.py)
+CREATE TABLE IF NOT EXISTS sizes (          -- every 10 minutes: database, its biggest parts, and the disk
+    at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    what  TEXT NOT NULL,
+    bytes BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sizes_what_at ON sizes (what, at);
+CREATE TABLE IF NOT EXISTS upload_ledger (  -- bytes and files runners uploaded, per hour and project (kept for good; metrics are archived)
+    hour    TIMESTAMPTZ NOT NULL,
+    project TEXT NOT NULL,
+    store   TEXT NOT NULL,
+    bytes   BIGINT NOT NULL,
+    files   BIGINT NOT NULL,
+    PRIMARY KEY (hour, project)
+);
+CREATE TABLE IF NOT EXISTS bucket_usage (   -- a full listing of each bucket, daily (scripts/bucket_scan.py): the ground truth
+    at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    store   TEXT NOT NULL,
+    bucket  TEXT NOT NULL,
+    prefix  TEXT NOT NULL,
+    objects BIGINT NOT NULL,
+    bytes   BIGINT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS bucket_usage_at ON bucket_usage (store, at);

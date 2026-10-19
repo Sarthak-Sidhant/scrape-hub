@@ -34,6 +34,10 @@
 .left .lr .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.left .lr .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .left .track{height:12px;position:relative}.left .track i{position:absolute;left:0;top:0;bottom:0;border-radius:0 3px 3px 0}
 .log td{white-space:nowrap}.log td.r{white-space:normal;color:var(--dim)}.log .up{color:var(--ok)}.log .dn{color:var(--bad)}
+.store{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px 18px;margin:6px 0 10px}.store b{display:block;font-size:19px;line-height:1.2}.store span{color:var(--dim);font-size:11px}
+.stack{height:12px;background:var(--bar);border-radius:6px;overflow:hidden;display:flex;margin:8px 0 4px}.stack i{display:block;height:100%}.stack i+i{margin-left:2px}
+.advice{margin-top:10px;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);font-size:12px}.advice.warn{border-color:var(--warn)}.advice.bad{border-color:var(--bad)}
+.bk{margin-top:12px}.bk h3{font-size:12px;margin:0 0 2px}
 .empty{color:var(--dim);font-size:12px;padding:8px 0}
 .more{margin-top:12px;font-size:12px;color:var(--dim)}
 @media (max-width:700px){.left .lr{grid-template-columns:96px minmax(0,1fr) 70px}.left .lr .n .dim{display:none}.host{grid-template-columns:1fr}header .sp{display:none}header>span.dim{flex:1 1 100%;font-size:11px}}
@@ -59,6 +63,13 @@
 <div class="left" id="left"></div></section>
 </div>
 
+
+<div class="grid2">
+<section><div class="head"><div><h2>Database on this VPS</h2><p class="lede">Postgres on the hub's own disk. Every tender is one row (about 5 KB); its pages and documents live in object storage.</p></div></div>
+<div id="dbbox"><div class="empty">loading</div></div></section>
+<section><div class="head"><div><h2>Object storage and cost</h2><p class="lede">Tender pages and documents (B2), plus eprocure's pages, backups and archived telemetry (R2). Neither reports its size, so a daily listing measures each bucket and the runners' upload counts fill in the hours since.</p></div></div>
+<div id="objbox"><div class="empty">loading</div></div></section>
+</div>
 <section><div class="head"><div><h2>Throttle log</h2><p class="lede">Every minute the hub sets each source's threads and windows in flight from how it answers; caps go up after 10 healthy minutes at the ceiling and down when a source chokes or falls over.</p></div>
 <div class="seg" id="logf" role="group" aria-label="log filter"><button data-c="1" aria-pressed="true">Cap changes</button><button data-c="0" aria-pressed="false">Everything</button></div></div>
 <div class="scroll"><table class="log" id="log"></table></div></section>
@@ -72,7 +83,7 @@ const $=id=>document.getElementById(id);
 const STATUS={running:"scraping",slow:"slow",down:"down",done:"done",parked:"parked",idle:"idle"};
 const ORDER={down:0,slow:1,running:2,idle:3,parked:4,done:5};
 const dur=s=>{if(s==null)return"-";const m=s/60;return m<90?Math.round(m)+" min":m<2880?(m/60).toFixed(m<600?1:0)+" h":(m/1440).toFixed(1)+" days"};
-const bytes=b=>b==null?"-":b>=1e12?(b/1e12).toFixed(2)+" TB":b>=1e9?(b/1e9).toFixed(b>=1e11?0:1)+" GB":(b/1e6).toFixed(0)+" MB";
+const bytes=b=>b==null?"-":Math.abs(b)>=1e12?(b/1e12).toFixed(2)+" TB":Math.abs(b)>=1e9?(b/1e9).toFixed(Math.abs(b)>=1e11?0:1)+" GB":Math.abs(b)>=1e6?(b/1e6).toFixed(0)+" MB":(b/1e3).toFixed(0)+" KB";
 const store=(k,v)=>{try{v===undefined?null:localStorage.setItem("hub."+k,v)}catch(e){}};
 const load=(k,d)=>{try{return localStorage.getItem("hub."+k)??d}catch(e){return d}};
 let D=null,FAM=load("fam",""),STAT=load("stat","all"),SORT=load("sort","eta"),OPEN=null,RANGE=load("range","6h"),CAPS=true;
@@ -199,6 +210,46 @@ async function log(){
   return `<tr><td class="dim">${ago(a.at)} ago</td><td>${esc(title(a.family+"/"+a.source))}${a.stage==="count"?' <span class="dim">(count)</span>':""}</td><td>${ch}</td><td class="r">${esc(a.reason)}</td></tr>`}).join(""):`<tr><td colspan="4" class="dim">No changes yet.</td></tr>`)}
 $("logf").onclick=e=>{const b=e.target.closest("[data-c]");if(!b)return;CAPS=b.dataset.c==="1";$("logf").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x===b));log()};
 
+
+const usd=v=>v==null?"-":"$"+(v>=100?Math.round(v).toLocaleString("en-US"):v.toFixed(2));
+const when=h=>{if(h==null)return"-";const d=new Date(Date.now()+h*3600e3);return d.toLocaleDateString([],{day:"numeric",month:"short"})+" ("+dur(h*3600)+")"};
+async function storageBox(){
+ let S;try{S=await j("/api/storage")}catch(e){return}
+ const d=S.database,used=d.disk_total-d.disk_free,other=Math.max(0,used-d.bytes),r=d.records;
+ const proj=d.projected_final,projFree=proj!=null?d.disk_free-(proj-d.bytes):null;
+ const safety=30e9,tight=projFree!=null&&projFree<safety,full=projFree!=null&&projFree<0;
+ const hTo30=d.growth_per_hour>0?(d.disk_free-safety)/d.growth_per_hour:null;
+ const parts=Object.entries(d.parts).map(([k,v])=>`<tr><td>${esc(k)}</td><td class="n">${bytes(v)}</td></tr>`).join("");
+ $("dbbox").innerHTML=`<div class="store">
+   <div><b>${bytes(d.bytes)}</b><span>database now</span></div>
+   <div><b>${d.growth_per_hour!=null?(d.growth_per_hour>=0?"+":"")+bytes(d.growth_per_hour)+"/h":"-"}</b><span>growth, last 3 hours</span></div>
+   <div><b>${r.per_record?(r.per_record/1024).toFixed(1)+" KB":"-"}</b><span>per record (${compact(r.rows||0)} rows)</span></div>
+   <div><b class="${full?"bad":tight?"warn":""}">${proj!=null?bytes(proj):"-"}</b><span>when the ${compact(d.left_records)} records still to come are in</span></div></div>
+  <div class="stack" role="img" aria-label="disk: database ${bytes(d.bytes)}, everything else ${bytes(other)}, free ${bytes(d.disk_free)}">
+   <i style="width:${d.bytes/d.disk_total*100}%;background:var(--s1)"></i><i style="width:${other/d.disk_total*100}%;background:var(--sx)"></i></div>
+  <div class="lg"><span><i style="background:var(--s1)"></i>database ${bytes(d.bytes)}</span><span><i style="background:var(--sx)"></i>everything else ${bytes(other)}</span><span><i style="background:var(--bar)"></i>free ${bytes(d.disk_free)} of ${bytes(d.disk_total)}</span></div>
+  <div class="advice ${full?"bad":tight?"warn":""}">${proj==null?"Not enough history yet for a projection; it builds up over the next hour.":
+   full?`<b>The database will not fit.</b> At ${bytes(d.growth_per_hour)}/h it reaches the disk's end around ${when(d.disk_free/d.growth_per_hour)}. Scale the disk before then.`:
+   tight?`<b>Tight:</b> about ${bytes(projFree)} would be left when the crawl ends, under the ${bytes(safety)} kept free for backups and slack. Free space drops below that around ${when(hTo30)}: scale before then.`:
+   `<b>Fits:</b> about ${bytes(projFree)} would still be free when the crawl ends.`}</div>
+  <div class="chart" id="dbchart" style="margin-top:10px"></div>
+  <details class="bk"><summary>Biggest tables</summary><table>${parts}</table></details>`;
+ if(d.history.length>1){const H=d.history;Hub.lines($("dbchart"),{labels:H.map(p=>new Date(p[0]*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})),
+  series:[{label:"database",color:"--s1",values:H.map(p=>p[1])}],height:150,yFmt:bytes,aria:"database size over time"})}
+ else $("dbchart").innerHTML='<div class="empty">The size history starts now; a chart appears after a few samples (one every 10 minutes).</div>';
+ $("objbox").innerHTML=S.stores.map(o=>{const L=o.listed;
+  return `<div class="bk"><h3>${o.store.toUpperCase()} · ${esc(o.bucket)} <span class="dim" style="font-weight:400">at ${usd(o.price_tb_month)} per TB a month</span></h3><div class="store">
+   <div><b>${bytes(o.bytes)}</b><span>${fmt(o.objects)} objects</span></div>
+   <div><b>${usd(o.cost_month)}</b><span>a month at this size</span></div>
+   <div><b>${o.per_hour!=null?bytes(o.per_hour)+"/h":"-"}</b><span>uploaded in the last full hour${o.per_file?` · ${bytes(o.per_file)} a file`:""}</span></div>
+   ${o.projected_bytes!=null?`<div><b>${bytes(o.projected_bytes)} · ${usd(o.projected_cost_month)}</b><span>a month once the crawl is done</span></div>`:""}</div>
+   <div class="dim" style="font-size:11px">${L.at?`Listed ${ago(L.at)} ago: ${bytes(L.bytes)} in ${fmt(L.objects)} objects; ${bytes(o.uploaded_since_listing)} uploaded since.`:`Not listed yet (the first daily listing is running); this is the runners' upload count: ${bytes(o.uploaded_since_listing)}.`}</div>
+   <div class="chart" id="up-${o.store}"></div></div>`}).join("")+`<div class="note">Prices are list prices (B2 $6.95, R2 $15 per TB a month, first 10 GB free); set B2_PRICE_TB_MONTH / R2_PRICE_TB_MONTH in the hub's environment if yours differ. Egress, API calls and taxes are not included.</div>`;
+ S.stores.forEach(o=>{if(!o.hourly.length)return;const by=new Map(o.hourly.map(h=>[h[0],h])),end=Math.floor(Date.now()/3600e3)*3600,H=[];
+  for(let i=23;i>=0;i--){const t=end-i*3600;H.push(by.get(t)||[t,0,0])}     // the last 24 hours, empty ones included
+  Hub.bars($("up-"+o.store),{labels:H.map(h=>new Date(h[0]*1000).toLocaleTimeString([],{hour:"2-digit"})),series:[{key:"b",label:"uploaded",color:"--s1"}],
+   values:(i)=>H[i][1],height:120,yFmt:bytes,tipFmt:bytes,aria:"bytes uploaded per hour",tipHead:(l,i)=>`${l}:00 hour · ${fmt(H[i][2])} files`})});
+}
 async function tick(){
  try{D=await j("/api/scrapes");kpis(D);fams(D);tiles(D);leftChart(D);
   $("dot").className="live";$("updated").textContent="updated "+new Date().toLocaleTimeString()}
@@ -207,6 +258,6 @@ seg($("fstat"),STATS,STAT,"stat",k=>{STAT=k;tiles(D)});
 seg($("fsort"),SORTS,SORT,"sort",k=>{SORT=k;tiles(D)});
 seg($("rrange"),Object.keys(RANGES).map(k=>[k,k]),RANGE,"range",k=>{RANGE=k;rateChart()});
 let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D)tiles(D)},150)});
-tick().then(()=>{rateChart();log()});
-setInterval(tick,15000);setInterval(rateChart,60000);setInterval(log,30000);
+tick().then(()=>{rateChart();log();storageBox()});
+setInterval(tick,15000);setInterval(rateChart,60000);setInterval(log,30000);setInterval(storageBox,60000);
 </script></body></html>

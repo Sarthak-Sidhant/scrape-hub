@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
-from . import config, dash_auth, db, fleet, health, metabase, scrapes
+from . import config, dash_auth, db, fleet, health, metabase, scrapes, storage
 from .auth import Caller, caller, client_ip
 
 def _iso(v):
@@ -152,6 +152,11 @@ def janitor():
                 adapt_speeds(c)
         except Exception as e:
             print("throttle error:", e, flush=True)
+        try:
+            with db.conn() as c:
+                storage.tick(c)
+        except Exception as e:
+            print("storage error:", e, flush=True)
         try:
             with db.conn() as c:
                 c.execute(
@@ -894,6 +899,23 @@ def scrapes_api():
     """Every scrape as families of sources (see scrape_hub/scrapes.py), with the hub machine's own limits."""
     with db.conn() as c:
         return JSONResponse(json.loads(json.dumps(scrapes.cached(c), default=_iso)))
+
+
+_storage_cache = {"at": 0.0, "data": None}
+
+
+@app.get("/api/storage", dependencies=[Depends(need_login)])
+def storage_api():
+    """Database and object storage: size now, growth, cost, and where they are heading (cached a minute)."""
+    if not _storage_cache["data"] or time.time() - _storage_cache["at"] > 60:
+        with db.conn() as c:
+            left = {}
+            for s in scrapes.cached(c)["sources"]:
+                if s["status"] not in ("parked", "done"):
+                    left[s["family"]] = left.get(s["family"], 0) + s["left"]
+            _storage_cache["data"] = storage.report(c, left)
+            _storage_cache["at"] = time.time()
+    return JSONResponse(json.loads(json.dumps(_storage_cache["data"], default=_iso)))
 
 
 @app.get("/api/adjustments", dependencies=[Depends(need_login)])

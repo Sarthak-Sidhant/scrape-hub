@@ -54,7 +54,7 @@ def client():
 @pytest.fixture
 def clean(client):
     with db.conn() as c:
-        c.execute("TRUNCATE probes, capacity, showcase, adjustments, failures, metrics, batches, records, queue, runs, projects RESTART IDENTITY CASCADE")
+        c.execute("TRUNCATE probes, capacity, showcase, adjustments, failures, metrics, batches, records, queue, runs, projects, sizes, upload_ledger, bucket_usage RESTART IDENTITY CASCADE")
 
 
 def hdr(**kw):
