@@ -238,3 +238,50 @@ def adjustments(c, limit=60, caps_only=False):
         out.append({"at": r["at"], "family": fam, "source": src, "stage": stage, "reason": r["reason"], "threads": [r["threads_from"], r["threads_to"]],
                     "windows": [r["claimed_from"], r["claimed_to"]], "s_per_req": r["s_per_req"]})
     return out
+
+
+TRAFFIC_NAMES = ("n_http", "t_http_s", "http_error", "http_503", "http_429", "http_403", "doc_stored", "doc_refused", "doc_failed",
+                 "sessions_new", "sessions_renewed", "captcha_ok", "captcha_fail", "uploaded_bytes", "uploaded_files", "n_tenders")
+_traffic = {"at": 0.0, "data": None}
+
+
+def traffic(c):
+    """What our runners send to the sites and pull from them, from the counters they report (cached a minute): per minute over the last
+    10 minutes in all and per project, and a 2-hour series in 5-minute buckets. Page requests (n_http) and document downloads are counted
+    separately; a login is a search page, a captcha and a submit."""
+    if _traffic["data"] and time.time() - _traffic["at"] < 60:
+        return _traffic["data"]
+    names = list(TRAFFIC_NAMES)
+    per = {}
+    for r in c.execute("""SELECT project, name, sum(value) AS v FROM metrics WHERE at > now() - interval '10 minutes' AND name = ANY(%s)
+                          GROUP BY 1, 2""", (names,)).fetchall():
+        per.setdefault(r["project"], {})[r["name"]] = float(r["v"]) / 10
+    series = {}
+    for r in c.execute("""SELECT (floor(extract(epoch FROM at) / 300) * 300)::bigint AS t, name, sum(value) AS v FROM metrics
+                          WHERE at > now() - interval '2 hours' AND name = ANY(%s) GROUP BY 1, 2 ORDER BY 1""", (names,)).fetchall():
+        series.setdefault(r["t"], {})[r["name"]] = float(r["v"]) / 5
+
+    def shape(m):
+        n = m.get("n_http", 0)
+        docs = m.get("doc_stored", 0) + m.get("doc_refused", 0) + m.get("doc_failed", 0)
+        caps = m.get("captcha_ok", 0) + m.get("captcha_fail", 0)
+        return {"pages": n, "docs": docs, "docs_refused": m.get("doc_refused", 0), "logins": m.get("sessions_new", 0),
+                "renewed": m.get("sessions_renewed", 0), "captchas": caps, "captcha_ok": (m.get("captcha_ok", 0) / caps) if caps else None,
+                "s_per_req": (m.get("t_http_s", 0) / n) if n else None, "dropped": m.get("http_error", 0),
+                "throttled": m.get("http_503", 0) + m.get("http_429", 0) + m.get("http_403", 0),
+                "bytes": m.get("uploaded_bytes", 0), "tenders": m.get("n_tenders", 0),
+                "requests": n + docs + 3 * m.get("sessions_new", 0) + caps}
+    total = {}
+    for m in per.values():
+        for k, v in m.items():
+            total[k] = total.get(k, 0) + v
+    by_source = {}
+    for proj, m in per.items():
+        fam, src, stage = place(proj, None)
+        b = by_source.setdefault(f"{fam}/{src}", {})
+        for k, v in m.items():
+            b[k] = b.get(k, 0) + v
+    data = {"per_min": shape(total), "sources": {k: shape(v) for k, v in by_source.items()},
+            "series": [{"t": t, **shape(m)} for t, m in sorted(series.items())], "generated": time.time()}
+    _traffic["data"], _traffic["at"] = data, time.time()
+    return data

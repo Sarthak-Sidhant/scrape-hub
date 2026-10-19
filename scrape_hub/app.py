@@ -918,6 +918,13 @@ def storage_api():
     return JSONResponse(json.loads(json.dumps(_storage_cache["data"], default=_iso)))
 
 
+@app.get("/api/traffic", dependencies=[Depends(need_login)])
+def traffic_api():
+    """Requests, documents, logins and data our runners send to and pull from the sites, per minute (see scrapes.traffic)."""
+    with db.conn() as c:
+        return JSONResponse(json.loads(json.dumps(scrapes.traffic(c), default=_iso)))
+
+
 @app.get("/api/adjustments", dependencies=[Depends(need_login)])
 def adjustments_api(limit: int = 60, caps: bool = False):
     """The automatic throttle's latest decisions across all projects, newest first; caps=1 keeps only window-cap changes."""
