@@ -35,6 +35,12 @@ R2_BUCKET = os.environ.get("R2_BUCKET", "")
 R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_PRESIGN_SECONDS = int(os.environ.get("R2_PRESIGN_SECONDS", "900"))
+# Backblaze B2 (S3-compatible) for bulk scraped data: projects with settings.storage = "b2" upload there; everything else stays on R2.
+B2_ENDPOINT = os.environ.get("B2_ENDPOINT", "")
+B2_REGION = os.environ.get("B2_REGION", "")
+B2_BUCKET = os.environ.get("B2_BUCKET", "")
+B2_ACCESS_KEY_ID = os.environ.get("B2_ACCESS_KEY_ID", "")
+B2_SECRET_ACCESS_KEY = os.environ.get("B2_SECRET_ACCESS_KEY", "")
 
 # Private Metabase proxied at /metabase/ (see metabase.py). Empty means the route answers 503.
 METABASE_URL = os.environ.get("METABASE_URL", "").rstrip("/")

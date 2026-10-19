@@ -470,10 +470,11 @@ def read_urls(run_id: int, body: ReadUrls, request: Request, who: Caller = Depen
         own_run(c, run_id, who)
         target_access(c, body.target, who)
         seen(c, run_id, request)
-    if not (config.R2_BUCKET and config.R2_ENDPOINT and config.R2_ACCESS_KEY_ID):
+        store = store_for(c, body.target)
+    if not store_ready(store):
         raise HTTPException(503, "object storage is not configured on the hub")
-    client = s3_client()
-    return {"urls": {k: client.generate_presigned_url("get_object", Params={"Bucket": config.R2_BUCKET, "Key": k},
+    client, bucket = s3_client(store)
+    return {"urls": {k: client.generate_presigned_url("get_object", Params={"Bucket": bucket, "Key": k},
                                                        ExpiresIn=config.R2_PRESIGN_SECONDS) for k in body.keys},
             "expires_in": config.R2_PRESIGN_SECONDS}
 
@@ -502,36 +503,58 @@ PATH_RE = re.compile(r"^[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)*$")
 _s3 = None
 
 
-def s3_client():
-    global _s3
-    if _s3 is None:
+_stores = {}
+
+
+def store_for(c, project: str) -> str:
+    """Where a project's files live: "b2" when its settings say storage=b2 (and B2 is configured), otherwise "r2"."""
+    row = c.execute("SELECT settings->>'storage' AS s FROM projects WHERE name=%s", (project,)).fetchone()
+    return "b2" if row and row["s"] == "b2" and config.B2_BUCKET else "r2"
+
+
+def store_ready(store: str) -> bool:
+    return bool(config.B2_BUCKET and config.B2_ENDPOINT and config.B2_ACCESS_KEY_ID) if store == "b2" else \
+        bool(config.R2_BUCKET and config.R2_ENDPOINT and config.R2_ACCESS_KEY_ID)
+
+
+def s3_client(store: str = "r2"):
+    """(client, bucket) for R2 or B2; created once per process. Runners only ever get pre-signed links, never these keys."""
+    if store not in _stores:
         import boto3
         from botocore.config import Config
-        _s3 = boto3.client("s3", endpoint_url=config.R2_ENDPOINT, aws_access_key_id=config.R2_ACCESS_KEY_ID,
-                           aws_secret_access_key=config.R2_SECRET_ACCESS_KEY, region_name="auto",
-                           config=Config(signature_version="s3v4", s3={"addressing_style": "path"}))
-    return _s3
+        if store == "b2":
+            client = boto3.client("s3", endpoint_url=config.B2_ENDPOINT, aws_access_key_id=config.B2_ACCESS_KEY_ID,
+                                  aws_secret_access_key=config.B2_SECRET_ACCESS_KEY, region_name=config.B2_REGION or None,
+                                  config=Config(signature_version="s3v4", s3={"addressing_style": "path"}))
+            _stores[store] = (client, config.B2_BUCKET)
+        else:
+            client = boto3.client("s3", endpoint_url=config.R2_ENDPOINT, aws_access_key_id=config.R2_ACCESS_KEY_ID,
+                                  aws_secret_access_key=config.R2_SECRET_ACCESS_KEY, region_name="auto",
+                                  config=Config(signature_version="s3v4", s3={"addressing_style": "path"}))
+            _stores[store] = (client, config.R2_BUCKET)
+    return _stores[store]
 
 
 @app.post("/api/v1/runs/{run_id}/upload-urls")
 def upload_urls(run_id: int, body: UploadRequest, request: Request, who: Caller = Depends(caller)):
     """One-time upload links for the run's project. The runner PUTs the bytes straight to object storage, so neither the
     storage keys nor the data pass through GitHub or this server. Objects can only be written under `<project>/`."""
-    if not (config.R2_BUCKET and config.R2_ENDPOINT and config.R2_ACCESS_KEY_ID):
-        raise HTTPException(503, "object storage is not configured on the hub")
     for f in body.files:
         if not PATH_RE.match(f.path) or any(seg in (".", "..") for seg in f.path.split("/")):
             raise HTTPException(422, f"bad path {f.path!r}: use letters, digits . _ - and / between folders")
     with db.conn() as c:
         run = own_run(c, run_id, who)
         seen(c, run_id, request)
-    client, out = s3_client(), []
+        store = store_for(c, run["project"])
+    if not store_ready(store):
+        raise HTTPException(503, "object storage is not configured on the hub")
+    (client, bucket), out = s3_client(store), []
     for f in body.files:
         key = f"{run['project']}/{f.path}"
-        url = client.generate_presigned_url("put_object", Params={"Bucket": config.R2_BUCKET, "Key": key, "ContentType": f.content_type},
+        url = client.generate_presigned_url("put_object", Params={"Bucket": bucket, "Key": key, "ContentType": f.content_type},
                                             ExpiresIn=config.R2_PRESIGN_SECONDS, HttpMethod="PUT")
         out.append({"path": f.path, "key": key, "url": url, "headers": {"Content-Type": f.content_type}})
-    return {"urls": out, "expires_in": config.R2_PRESIGN_SECONDS}
+    return {"urls": out, "expires_in": config.R2_PRESIGN_SECONDS, "store": store}
 
 
 def own_run(c, run_id: int, who: Caller):
@@ -576,8 +599,18 @@ def post_batch(run_id: int, body: BatchIn, request: Request, who: Caller = Depen
         if body.records:
             with c.cursor() as cur:
                 cur.executemany(
+                    # a re-fetch replaces the record, but the earlier saved pages are kept: their key moves to details.pages_history
                     """INSERT INTO records (project, record_id, data, run_id) VALUES (%s,%s,%s::jsonb,%s)
-                       ON CONFLICT (project, record_id) DO UPDATE SET data=EXCLUDED.data, run_id=EXCLUDED.run_id, scraped_at=now()""",
+                       ON CONFLICT (project, record_id) DO UPDATE SET
+                           data = CASE WHEN EXCLUDED.data->'details' ? 'pages_key' AND (records.data->'details' ? 'pages_history'
+                                            OR records.data->'details'->>'pages_key' IS DISTINCT FROM EXCLUDED.data->'details'->>'pages_key')
+                                            AND records.data->'details'->>'pages_key' IS NOT NULL
+                                       THEN jsonb_set(EXCLUDED.data, '{details,pages_history}',
+                                                      coalesce(records.data->'details'->'pages_history', '[]'::jsonb)
+                                                      || CASE WHEN records.data->'details'->>'pages_key' IS DISTINCT FROM EXCLUDED.data->'details'->>'pages_key'
+                                                              THEN jsonb_build_array(records.data->'details'->>'pages_key') ELSE '[]'::jsonb END)
+                                       ELSE EXCLUDED.data END,
+                           run_id=EXCLUDED.run_id, scraped_at=now()""",
                     [(run["project"], r.record_id, json.dumps(r.data), run_id) for r in body.records],
                 )
         if body.records:   # a tender that is now stored is no longer a tender failure

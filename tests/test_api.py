@@ -845,3 +845,33 @@ def test_throttle_resets_a_down_portal_to_the_bottom(client, clean):
         st = c.execute("SELECT settings FROM projects WHERE name='downsite'").fetchone()["settings"]
         why = c.execute("SELECT reason FROM adjustments").fetchone()["reason"]
     assert (st["threads"], st["max_claimed"]) == (1, 1) and "is down" in why
+
+
+def test_projects_marked_b2_upload_to_backblaze_others_to_r2(client, clean):
+    h = hdr()
+    r_old = start(client, project="oldstore")
+    r_new = start(client, project="newstore")
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = settings || '{"storage": "b2"}' WHERE name='newstore'""")
+    up = lambda rid: client.post(f"/api/v1/runs/{rid}/upload-urls", headers=h, json={"files": [{"path": "pages/2026/X/t.json.gz", "content_type": "application/gzip"}]}).json()
+    old, new = up(r_old), up(r_new)
+    assert old["store"] == "r2" and "acct.r2.example.com" in old["urls"][0]["url"] and "test-bucket" in old["urls"][0]["url"]
+    assert new["store"] == "b2" and "backblazeb2.com" in new["urls"][0]["url"] and "b2-test-bucket" in new["urls"][0]["url"]
+    assert new["urls"][0]["key"] == "newstore/pages/2026/X/t.json.gz"
+    got = client.post(f"/api/v1/runs/{r_new}/read-urls", headers=h, json={"target": "newstore", "keys": ["newstore/pages/2026/X/t.json.gz"]}).json()
+    assert "backblazeb2.com" in got["urls"]["newstore/pages/2026/X/t.json.gz"]
+
+
+def test_a_refetch_keeps_the_earlier_saved_pages_in_history(client, clean):
+    h = hdr()
+    rid = start(client, project="versions")
+    send = lambda key, extra=None: client.post(f"/api/v1/runs/{rid}/batches", headers=h, json={"records": [
+        {"record_id": "T1", "data": {"details": {"pages_key": key, "fields": {"tender_title": "x"}, **(extra or {})}}}]})
+    send("versions/pages/2026/A/T1__20261019T010000Z.json.gz")
+    send("versions/pages/2026/A/T1__20261020T010000Z.json.gz")
+    send("versions/pages/2026/A/T1__20261020T010000Z.json.gz")          # the same key again: nothing added
+    send("versions/pages/2026/A/T1__20261021T010000Z.json.gz")
+    with db.conn() as c:
+        d = c.execute("SELECT data FROM records WHERE project='versions' AND record_id='T1'").fetchone()["data"]["details"]
+    assert d["pages_key"].endswith("20261021T010000Z.json.gz")
+    assert d["pages_history"] == ["versions/pages/2026/A/T1__20261019T010000Z.json.gz", "versions/pages/2026/A/T1__20261020T010000Z.json.gz"]
