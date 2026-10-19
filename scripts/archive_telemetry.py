@@ -18,10 +18,10 @@ import sys
 
 import psycopg
 
-TABLES = {            # table -> days kept in the database (the dashboard's charts read these)
+TABLES = {            # table -> days kept in the database (the dashboard's charts read these); older days move to object storage
     "probes": 30,     # one check a minute per portal
-    "metrics": 14,    # runner counters: seconds per portal request, captchas, phase timings
-    "batches": 14,    # records per upload, errors, blocked
+    "metrics": 2,     # runner counters: about 2 GB a day during the 44-portal crawl, so only the last 2 days stay in the database
+    "batches": 3,     # records per upload, errors, blocked
 }
 PREFIX = "telemetry/"
 
