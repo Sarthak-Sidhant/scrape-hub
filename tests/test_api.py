@@ -795,17 +795,17 @@ def test_throttle_phases_follow_india_time():
 
 def test_throttle_step_moves_threads_and_windows_within_the_phase():
     from scrape_hub.app import adapt_step
-    ad = {"max_windows": 20}
-    assert adapt_step("peak", ad, 4, 6, 0.8, 0, 0)[:2] == (6, 10)          # quick at night: +2 threads, +4 windows
-    assert adapt_step("peak", ad, 15, 19, 0.8, 0, 0)[:2] == (16, 20)       # up to the ceilings
-    assert adapt_step("day", ad, 4, 6, 0.5, 0, 0)[:2] == (5, 7)            # quick in the day: +1 each, more gently
-    assert adapt_step("day", ad, 12, 20, 0.5, 0, 0)[:2] == (6, 10)         # day ceilings: 6 threads, half the night windows
+    ad = {"max_windows": 40}
+    assert adapt_step("peak", ad, 4, 6, 0.8, 0, 0)[:2] == (6, 10)          # quick: +2 threads, +4 windows
+    assert adapt_step("peak", ad, 4, 24, 0.8, 0, 0)[:2] == (6, 30)         # bigger: a quarter more windows
+    assert adapt_step("day", ad, 4, 6, 0.8, 0, 0)[:2] == (6, 10)           # the day runs flat out too
+    assert adapt_step("peak", ad, 15, 39, 0.8, 0, 0)[:2] == (16, 40)       # up to the ceilings
     assert adapt_step("peak", ad, 8, 12, 4.0, 0, 0)[:2] == (7, 10)         # above the 3 s target: ease off
     assert adapt_step("peak", ad, 8, 12, 7.0, 0, 0)[:2] == (4, 6)          # over twice the target: halve both
     assert adapt_step("peak", ad, 8, 12, 0.8, 0, 0.25)[:2] == (4, 6)       # searches failing: halve even if answers look quick
     assert adapt_step("peak", ad, 1, 1, 9.0, 0, 0)[:2] == (1, 1)           # never below one thread and one window
     assert adapt_step("peak", ad, 8, 12, None, 0, 0)[:2] == (8, 12)        # too little traffic: leave it
-    assert adapt_step("peak", {"max_windows": 20, "peak": {"target_s": 1.0}}, 8, 12, 1.5, 0, 0)[:2] == (7, 10)   # per-project override
+    assert adapt_step("day", {"max_windows": 20, "day": {"target_s": 1.0}}, 8, 12, 1.5, 0, 0)[:2] == (7, 10)   # per-project override
 
 
 def test_adaptive_throttle_acts_once_a_minute_and_logs(client, clean):
@@ -827,9 +827,9 @@ def test_adaptive_throttle_acts_once_a_minute_and_logs(client, clean):
     assert (st["threads"], st["max_claimed"], st["adaptive_phase"]) == (6, 10, "peak")
     assert [(r["threads_from"], r["threads_to"], r["claimed_from"], r["claimed_to"], r["phase"]) for r in rows] == [(4, 6, 6, 10, "peak")]
     with db.conn() as c:
-        adapt_speeds(c, now=datetime.datetime(2026, 10, 19, 9, 0, tzinfo=ist))   # morning: straight down to the day ceilings
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 19, 9, 0, tzinfo=ist))   # morning: no daytime brake any more, it keeps climbing
         st = c.execute("SELECT settings FROM projects WHERE name='adapt'").fetchone()["settings"]
-    assert (st["threads"], st["max_claimed"]) == (6, 10) and st["adaptive_phase"] == "day"
+    assert (st["threads"], st["max_claimed"]) == (8, 14) and st["adaptive_phase"] == "day"
 
 
 def test_throttle_resets_a_down_portal_to_the_bottom(client, clean):

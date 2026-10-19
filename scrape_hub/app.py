@@ -25,11 +25,10 @@ WEB = Path(__file__).resolve().parent.parent / "web"
 # The throttle's intensity by time of day in India (where the portals' users are). Peak: hammer; shoulder: medium; day: conservative.
 # target_s: answer time to aim for; up: (threads, windows) added a minute while well under it; down: removed while above it;
 # threads/windows: ceilings, windows as a share of the project's night window cap.
-PHASES = {
-    "peak":     {"target_s": 3.0, "up": (2, 4), "down": (1, 2), "threads": 16, "windows": 1.0},
-    "shoulder": {"target_s": 2.0, "up": (1, 2), "down": (1, 2), "threads": 10, "windows": 0.75},
-    "day":      {"target_s": 1.2, "up": (1, 1), "down": (1, 1), "threads": 6,  "windows": 0.5},
-}
+# Since 20 Oct 2026 every band runs flat out ("max scraping whenever capacity is there"): the throttle's own reactions to slow answers,
+# failing searches and outages are what hold a portal back, not the clock. Per-project overrides (settings.adaptive.<band>) still work.
+_HAMMER = {"target_s": 3.0, "up": (2, 4), "down": (1, 2), "threads": 16, "windows": 1.0}
+PHASES = {"peak": dict(_HAMMER), "shoulder": dict(_HAMMER), "day": dict(_HAMMER)}
 
 
 def ist_phase(hour):
@@ -56,7 +55,8 @@ def adapt_step(phase, ad, threads, windows, sec, err_frac, fail_frac):
     if sec > target:
         return max(t_lo, threads - dn_t), max(w_lo, windows - dn_w), f"{phase}: {sec:.1f} s per request, above {target} s: ease off"
     if sec < 0.7 * target:
-        return min(t_hi, threads + up_t), min(w_hi, windows + up_w), f"{phase}: {sec:.1f} s per request, well under {target} s: more"
+        # climb fast while the portal is comfortably quick: at least the band's step, or a quarter more windows
+        return min(t_hi, threads + up_t), min(w_hi, windows + max(up_w, windows // 4)), f"{phase}: {sec:.1f} s per request, well under {target} s: more"
     return threads, windows, f"{phase}: {sec:.1f} s per request: holding"
 
 
