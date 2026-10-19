@@ -1132,7 +1132,14 @@ def gepnic_summary(c):
     rate = c.execute("""SELECT coalesce(sum(records), 0)::float / 5 AS r FROM batches WHERE at >= now() - interval '5 minutes'
                         AND project LIKE 'gepnic-%' AND project NOT LIKE '%-plan'""").fetchone()["r"]
     counted = c.execute("""SELECT count(*)::int AS n FROM queue WHERE project LIKE 'gepnic-%-plan' AND status='done' AND done_at > now() - interval '5 minutes'""").fetchone()["n"]
+    accounts = {r["repository"].split("/")[0]: r["n"] for r in c.execute(
+        """SELECT repository, count(*)::int AS n FROM runs WHERE project LIKE 'gepnic-%%' AND state='running'
+           AND last_seen >= now() - make_interval(secs => %s) GROUP BY 1""", (config.STALL_AFTER_S,)).fetchall()}
+    left = sum(r["expected"] for k, r in ten.items() if k != "done")      # tenders still expected in windows not done yet
+    rate10 = c.execute("""SELECT coalesce(sum(records), 0)::float / 10 AS r FROM batches WHERE at >= now() - interval '10 minutes'
+                          AND project LIKE 'gepnic-%' AND project NOT LIKE '%-plan'""").fetchone()["r"]
     return {"portals": portals, "running": runs["counting"] + runs["crawling"], "counting_runs": runs["counting"], "crawling_runs": runs["crawling"],
+            "accounts": accounts, "tenders_left": left, "rate_10m": rate10, "eta_s": int(left / rate10 * 60) if rate10 > 0 and left else None,
             "count": {"done": n(plan, "done"), "open": n(plan, "pending") + n(plan, "claimed"), "failed": n(plan, "failed"), "per_min": counted / 5},
             "crawl": {"done": n(ten, "done"), "open": n(ten, "pending") + n(ten, "claimed"), "failed": n(ten, "failed"),
                       "expected": sum(r["expected"] for r in ten.values()), "fetched": ten["done"]["fetched"] if "done" in ten else 0},
@@ -1359,6 +1366,18 @@ def fleet_api(hours: int = 24):
                                      coalesce(sum((payload->>'expected')::bigint), 0)::bigint AS expected
                               FROM queue WHERE project LIKE 'gepnic-%' GROUP BY 1, 2""").fetchall():
             prog.setdefault(r["project"], {})[r["status"]] = {"n": r["n"], "fetched": r["fetched"], "expected": r["expected"]}
+        # the throttle's current settings and the last change it made, per portal tenders project
+        throttle = {r["name"]: {"threads": r["t"], "windows": r["w"], "cap": r["cap"], "phase": r["ph"], "storage": r["st"] or "r2"}
+                    for r in c.execute("""SELECT name, (settings->>'threads')::int AS t, (settings->>'max_claimed')::int AS w,
+                                                 (settings->'adaptive'->>'max_windows')::int AS cap, settings->>'adaptive_phase' AS ph, settings->>'storage' AS st
+                                          FROM projects WHERE name LIKE 'gepnic-%' AND name NOT LIKE '%-plan'""").fetchall()}
+        for r in c.execute("""SELECT DISTINCT ON (project) project, at, threads_from, threads_to, claimed_from, claimed_to, reason FROM adjustments
+                              WHERE project LIKE 'gepnic-%' AND project NOT LIKE '%-plan' AND at > now() - interval '1 day' ORDER BY project, at DESC""").fetchall():
+            if r["project"] in throttle:
+                throttle[r["project"]]["last"] = {k: r[k] for k in ("at", "threads_from", "threads_to", "claimed_from", "claimed_to", "reason")}
+        rates = {r["project"]: float(r["n"]) / 10 for r in c.execute(
+            """SELECT project, sum(records) AS n FROM batches WHERE project LIKE 'gepnic-%' AND project NOT LIKE '%-plan'
+               AND at > now() - interval '10 minutes' GROUP BY 1""").fetchall()}
         # how each portal answers our own runners right now (both projects of a portal together): requests and seconds per request
         load = {}
         for r in c.execute("""SELECT regexp_replace(project, '-plan$', '') AS p, sum(value) FILTER (WHERE name='n_http') AS n,
@@ -1380,7 +1399,8 @@ def fleet_api(hours: int = 24):
                          "ok": lr["ok"] if lr else None, "ms": lr["ms"] if lr else None, "detail": lr["detail"] if lr else "",
                          "checked": lr["at"] if lr else None, "since": since.get(t), "uptime": (1 - f / n) if n else None, "checks": n, "hours": h,
                          "scraped": scraped if p["portal"] == "eprocure.gov.in" else None,
-                         "progress": portal_progress(prog, p["portal"]), "load": load.get(project_slug(p["portal"]))})
+                         "progress": portal_progress(prog, p["portal"]), "load": load.get(project_slug(p["portal"])),
+                         "throttle": throttle.get(project_slug(p["portal"])), "rate_10m": rates.get(project_slug(p["portal"]), 0.0)})
         tenders = sum(p["tenders_june2026"] for p in ps)
         out_servers.append({"ip": ip, "portals": rows, "tenders": tenders, "share": tenders / total, "capacity": cap.get(ip, {})})
     return JSONResponse(json.loads(json.dumps({"servers": out_servers, "total_tenders": total, "hours": hours, "source": fleet.source_note(),
