@@ -46,3 +46,6 @@ B2_SECRET_ACCESS_KEY = os.environ.get("B2_SECRET_ACCESS_KEY", "")
 METABASE_URL = os.environ.get("METABASE_URL", "").rstrip("/")
 METABASE_USER = os.environ.get("METABASE_USER", "")
 METABASE_PASSWORD = os.environ.get("METABASE_PASSWORD", "")
+# seconds a hub worker reuses a project's effective settings, and the minimum gap between writes of the same runner address
+SETTINGS_CACHE_S = float(os.environ.get("SETTINGS_CACHE_S", "10"))
+IP_WRITE_S = float(os.environ.get("IP_WRITE_S", "60"))

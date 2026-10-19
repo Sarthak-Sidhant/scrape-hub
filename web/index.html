@@ -479,5 +479,5 @@ document.addEventListener("toggle",e=>{const k=e.target.dataset&&e.target.datase
 document.addEventListener("click",async e=>{const b=e.target.closest("[data-retry]");if(!b)return;b.disabled=true;b.textContent="Retrying...";
  try{await fetch("/api/projects/"+encodeURIComponent(b.dataset.retry)+"/retry-failed",{method:"POST"})}finally{tick()}});
 let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{drawChart()},150)});
-initChartControls();tick();setInterval(tick,3000);
+initChartControls();tick();setInterval(tick,15000);
 </script></body></html>

@@ -292,7 +292,20 @@ def target_down(c, target: str) -> str:
     return ""
 
 
+_eff_cache = {}     # project -> (time, settings); runners call several times a second each, the answer changes once a minute at most
+
+
 def effective_settings(c, project: str) -> dict:
+    """effective_settings_now, cached for 10 seconds per hub worker (the throttle moves once a minute; runners read it about every 30 s)."""
+    hit = _eff_cache.get(project)
+    if hit and time.time() - hit[0] < config.SETTINGS_CACHE_S:
+        return dict(hit[1])
+    eff = effective_settings_now(c, project)
+    _eff_cache[project] = (time.time(), eff)
+    return dict(eff)
+
+
+def effective_settings_now(c, project: str) -> dict:
     """What runners should actually do right now: the saved settings, backed off if the target is pushing back.
 
     Backoff (when auto_backoff is on): in the last 3 minutes, if over 10% of work was blocked (with enough samples) or at least
@@ -364,11 +377,21 @@ def seed_queue(name: str, body: QueueSeed, who: Caller = Depends(caller)):
     return {"added": added, "reset": reset}
 
 
+_ip_seen = {}      # (run_id, ip, source) -> time last written; a run's address is written at most once a minute per hub worker
+
+
 def touch_ip(c, run_id: int, ip: str, source: str = "api"):
-    """Remember every address a run is seen from; the run's current address is the latest one."""
+    """Remember every address a run is seen from; the run's current address is the latest one. Written at most once a minute per
+    (run, address): at 150 calls a second, an upsert on every call made all of a run's requests queue on the same row."""
     ip = (ip or "").strip()[:64]
     if not ip:
         return
+    now, k = time.time(), (run_id, ip, source)
+    if now - _ip_seen.get(k, 0) < config.IP_WRITE_S:
+        return
+    _ip_seen[k] = now
+    if len(_ip_seen) > 50000:
+        _ip_seen.clear()
     c.execute(
         """INSERT INTO run_ips (run_id, ip, source) VALUES (%s,%s,%s)
            ON CONFLICT (run_id, ip, source) DO UPDATE SET last_seen=now(), hits=run_ips.hits+1""", (run_id, ip, source))
@@ -894,6 +917,7 @@ def set_settings(name: str, body: SettingsIn):
         if not c.execute("SELECT 1 FROM projects WHERE name=%s", (name,)).fetchone():
             raise HTTPException(404, "unknown project")
         c.execute("UPDATE projects SET settings = settings || %s::jsonb WHERE name=%s", (json.dumps(body.model_dump()), name))
+        _eff_cache.pop(name, None)
         return effective_settings(c, name)
 
 

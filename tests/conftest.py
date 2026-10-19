@@ -19,6 +19,7 @@ os.environ["OIDC_AUDIENCE"] = "https://scrape.test"
 os.environ["SCRAPE_LEGACY_TOKEN"] = "legacy-secret"
 os.environ["STATUS_PASSWORD_FILE"] = os.path.join(_tmp, "password")
 os.environ["STALL_AFTER_S"] = "300"
+os.environ.update(SETTINGS_CACHE_S="0", IP_WRITE_S="0")     # tests check each call's effect at once
 os.environ.update(R2_ENDPOINT="https://acct.r2.example.com", R2_BUCKET="test-bucket", R2_ACCESS_KEY_ID="AKIATEST", R2_SECRET_ACCESS_KEY="secret", R2_PRESIGN_SECONDS="900")
 os.environ.update(B2_ENDPOINT="https://s3.us-east-005.backblazeb2.com", B2_REGION="us-east-005", B2_BUCKET="b2-test-bucket", B2_ACCESS_KEY_ID="b2key", B2_SECRET_ACCESS_KEY="b2secret")
 
