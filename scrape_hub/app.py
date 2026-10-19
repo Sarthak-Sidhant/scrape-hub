@@ -55,8 +55,9 @@ def adapt_step(phase, ad, threads, windows, sec, err_frac, fail_frac):
     if sec > target:
         return max(t_lo, threads - dn_t), max(w_lo, windows - dn_w), f"{phase}: {sec:.1f} s per request, above {target} s: ease off"
     if sec < 0.7 * target:
-        # climb fast while the portal is comfortably quick: at least the band's step, or a quarter more windows
-        return min(t_hi, threads + up_t), min(w_hi, windows + max(up_w, windows // 4)), f"{phase}: {sec:.1f} s per request, well under {target} s: more"
+        # climb fast while far below the ceiling (a quarter more windows), gently near it (+2): portals fall over without slowing first
+        step = max(up_w, windows // 4) if windows < 0.6 * w_hi else min(up_w, 2)
+        return min(t_hi, threads + up_t), min(w_hi, windows + step), f"{phase}: {sec:.1f} s per request, well under {target} s: more"
     return threads, windows, f"{phase}: {sec:.1f} s per request: holding"
 
 
@@ -78,8 +79,16 @@ def adapt_speeds(c, now=None):
         if last and now.timestamp() - float(last) < 55:
             continue
         if st.get("probe") and target_down(c, st["probe"]):
-            # the portal is down: runners hold (effective_settings); when it is back, start again from the bottom
+            # the portal is down: runners hold (effective_settings); when it is back, start again from the bottom. If it fell while we
+            # had many windows on it, that level is too much for this server: the cap becomes 70% of it (learned, never raised again here).
             threads, windows = int(st.get("threads", 4)), int(st.get("max_claimed") or 1)
+            cap = int(ad.get("max_windows", 24))
+            if windows >= 8 and windows * 0.7 < cap:
+                learned = max(4, int(windows * 0.7))
+                c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (learned, p["name"]))
+                c.execute("""INSERT INTO adjustments (project, threads_from, threads_to, claimed_from, claimed_to, phase, reason)
+                             VALUES (%s,%s,%s,%s,%s,%s,%s)""", (p["name"], threads, threads, windows, windows, phase,
+                                                                 f"{st['probe']} went down at {windows} windows: window cap {cap} -> {learned}"))
             c.execute("""UPDATE projects SET settings = settings || jsonb_build_object('threads', 1, 'max_claimed', 1, 'adaptive_at', %s::float8,
                                                                                        'adaptive_phase', %s::text) WHERE name=%s""", (now.timestamp(), phase, p["name"]))
             if (threads, windows) != (1, 1):
@@ -529,10 +538,18 @@ _s3 = None
 _stores = {}
 
 
+_store_cache = {}
+
+
 def store_for(c, project: str) -> str:
-    """Where a project's files live: "b2" when its settings say storage=b2 (and B2 is configured), otherwise "r2"."""
+    """Where a project's files live: "b2" when its settings say storage=b2 (and B2 is configured), otherwise "r2". Cached a minute."""
+    hit = _store_cache.get(project)
+    if hit and time.time() - hit[0] < config.SETTINGS_CACHE_S * 6:
+        return hit[1]
     row = c.execute("SELECT settings->>'storage' AS s FROM projects WHERE name=%s", (project,)).fetchone()
-    return "b2" if row and row["s"] == "b2" and config.B2_BUCKET else "r2"
+    store = "b2" if row and row["s"] == "b2" and config.B2_BUCKET else "r2"
+    _store_cache[project] = (time.time(), store)
+    return store
 
 
 def store_ready(store: str) -> bool:
@@ -580,8 +597,19 @@ def upload_urls(run_id: int, body: UploadRequest, request: Request, who: Caller 
     return {"urls": out, "expires_in": config.R2_PRESIGN_SECONDS, "store": store}
 
 
+_run_cache = {}     # run_id -> (time, row): a run's project and owner never change, and runners call several times a second
+
+
 def own_run(c, run_id: int, who: Caller):
-    row = c.execute("SELECT * FROM runs WHERE id=%s", (run_id,)).fetchone()
+    hit = _run_cache.get(run_id)
+    if hit and time.time() - hit[0] < config.SETTINGS_CACHE_S * 6:
+        row = hit[1]
+    else:
+        row = c.execute("SELECT * FROM runs WHERE id=%s", (run_id,)).fetchone()
+        if row:
+            _run_cache[run_id] = (time.time(), row)
+            if len(_run_cache) > 20000:
+                _run_cache.clear()
     if not row or row["repository"] != who.repository:
         raise HTTPException(404, "run not found")
     return row

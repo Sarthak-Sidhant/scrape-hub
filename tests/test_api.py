@@ -797,7 +797,8 @@ def test_throttle_step_moves_threads_and_windows_within_the_phase():
     from scrape_hub.app import adapt_step
     ad = {"max_windows": 40}
     assert adapt_step("peak", ad, 4, 6, 0.8, 0, 0)[:2] == (6, 10)          # quick: +2 threads, +4 windows
-    assert adapt_step("peak", ad, 4, 24, 0.8, 0, 0)[:2] == (6, 30)         # bigger: a quarter more windows
+    assert adapt_step("peak", ad, 4, 20, 0.8, 0, 0)[:2] == (6, 25)         # bigger, still far below the cap: a quarter more windows
+    assert adapt_step("peak", ad, 4, 24, 0.8, 0, 0)[:2] == (6, 26)         # at 60% of the cap: gently, +2
     assert adapt_step("day", ad, 4, 6, 0.8, 0, 0)[:2] == (6, 10)           # the day runs flat out too
     assert adapt_step("peak", ad, 15, 39, 0.8, 0, 0)[:2] == (16, 40)       # up to the ceilings
     assert adapt_step("peak", ad, 8, 12, 4.0, 0, 0)[:2] == (7, 10)         # above the 3 s target: ease off
@@ -843,8 +844,9 @@ def test_throttle_resets_a_down_portal_to_the_bottom(client, clean):
     with db.conn() as c:
         adapt_speeds(c, now=datetime.datetime(2026, 10, 19, 2, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
         st = c.execute("SELECT settings FROM projects WHERE name='downsite'").fetchone()["settings"]
-        why = c.execute("SELECT reason FROM adjustments").fetchone()["reason"]
-    assert (st["threads"], st["max_claimed"]) == (1, 1) and "is down" in why
+        whys = [r["reason"] for r in c.execute("SELECT reason FROM adjustments").fetchall()]
+    assert (st["threads"], st["max_claimed"]) == (1, 1) and any("is down" in w for w in whys)
+    assert st["adaptive"]["max_windows"] == 9                          # it fell at 14 windows: the cap is now 70% of that
 
 
 def test_projects_marked_b2_upload_to_backblaze_others_to_r2(client, clean):
@@ -875,3 +877,25 @@ def test_a_refetch_keeps_the_earlier_saved_pages_in_history(client, clean):
         d = c.execute("SELECT data FROM records WHERE project='versions' AND record_id='T1'").fetchone()["data"]["details"]
     assert d["pages_key"].endswith("20261021T010000Z.json.gz")
     assert d["pages_history"] == ["versions/pages/2026/A/T1__20261019T010000Z.json.gz", "versions/pages/2026/A/T1__20261020T010000Z.json.gz"]
+
+
+def test_a_portal_that_falls_at_a_high_level_gets_a_lower_learned_cap(client, clean):
+    import datetime
+    from scrape_hub.app import adapt_speeds
+    start(client, project="learn")
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"probe": "site", "threads": 16, "max_claimed": 44, "adaptive": {"max_windows": 48}}' WHERE name='learn'""")
+        for _ in range(3):
+            c.execute("INSERT INTO probes (target, ok, ms) VALUES ('site', false, 20000)")
+    with db.conn() as c:
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 1, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
+        st = c.execute("SELECT settings FROM projects WHERE name='learn'").fetchone()["settings"]
+        reasons = [r["reason"] for r in c.execute("SELECT reason FROM adjustments ORDER BY at").fetchall()]
+    assert st["adaptive"]["max_windows"] == 30 and (st["threads"], st["max_claimed"]) == (1, 1)     # 70% of the 44 it fell at
+    assert any("went down at 44 windows" in r for r in reasons)
+
+
+def test_climb_is_gentle_near_the_ceiling():
+    from scrape_hub.app import adapt_step
+    assert adapt_step("peak", {"max_windows": 40}, 8, 12, 0.8, 0, 0)[:2] == (10, 16)      # far below: +4 (or a quarter)
+    assert adapt_step("peak", {"max_windows": 40}, 8, 30, 0.8, 0, 0)[:2] == (10, 32)      # above 60% of the cap: +2
