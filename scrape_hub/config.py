@@ -35,3 +35,8 @@ R2_BUCKET = os.environ.get("R2_BUCKET", "")
 R2_ACCESS_KEY_ID = os.environ.get("R2_ACCESS_KEY_ID", "")
 R2_SECRET_ACCESS_KEY = os.environ.get("R2_SECRET_ACCESS_KEY", "")
 R2_PRESIGN_SECONDS = int(os.environ.get("R2_PRESIGN_SECONDS", "900"))
+
+# Private Metabase proxied at /metabase/ (see metabase.py). Empty means the route answers 503.
+METABASE_URL = os.environ.get("METABASE_URL", "").rstrip("/")
+METABASE_USER = os.environ.get("METABASE_USER", "")
+METABASE_PASSWORD = os.environ.get("METABASE_PASSWORD", "")

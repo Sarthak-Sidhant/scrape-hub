@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
-from . import config, dash_auth, db, fleet, health
+from . import config, dash_auth, db, fleet, health, metabase
 from .auth import Caller, caller, client_ip
 
 def _iso(v):
@@ -138,6 +138,7 @@ async def lifespan(app):
 
 
 app = FastAPI(title="scrape-hub", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app.include_router(metabase.router)
 
 
 # ----------------------------------------------------------------------------- runner API
@@ -947,6 +948,14 @@ def report_file(name: str):
     return FileResponse(REPORTS / name)
 
 
+@app.get("/report")
+def report_latest(request: Request):
+    """Short link to the current report (the Punjab data QA), behind the dashboard login."""
+    if not logged_in(request):
+        return RedirectResponse("/login", 303)
+    return RedirectResponse("/reports/punjab-qa.html", 303)
+
+
 ASSETS = WEB / "assets"
 
 
@@ -1295,12 +1304,15 @@ def fleet_api(hours: int = 24):
                           (percentile_cont(0.5) WITHIN GROUP (ORDER BY ms) FILTER (WHERE ok))::int AS ms
                    FROM probes WHERE target = ANY(%s) AND at > now() - make_interval(hours => %s) GROUP BY 1, 2 ORDER BY 2""", (names, hours)).fetchall():
             hist.setdefault(r["target"], []).append([r["h"], r["n"], r["failed"], r["ms"]])
+        # since when each portal has been in its current state: per portal, the newest check with the other result, then the first
+        # check after it (two small index lookups per portal; one pass over every check grew slower every minute)
         since = {r["target"]: r["at"] for r in c.execute(
-            """SELECT p.target, min(p.at) AS at FROM probes p JOIN (SELECT DISTINCT ON (target) target, ok FROM probes WHERE target = ANY(%s)
-                     AND at > now() - interval '30 minutes' ORDER BY target, at DESC) l USING (target)
-               WHERE p.ok = l.ok AND p.at > coalesce((SELECT max(at) FROM probes q WHERE q.target = p.target AND q.ok <> l.ok AND q.at > now() - interval '7 days'),
-                                                    now() - interval '7 days')
-               GROUP BY 1""", (names,)).fetchall()}
+            """WITH last AS (SELECT DISTINCT ON (target) target, ok FROM probes WHERE target = ANY(%s) AND at > now() - interval '30 minutes'
+                             ORDER BY target, at DESC),
+                    flip AS (SELECT l.target, (SELECT max(q.at) FROM probes q WHERE q.target = l.target AND q.ok <> l.ok
+                                                AND q.at > now() - interval '7 days') AS t FROM last l)
+               SELECT f.target, (SELECT min(p.at) FROM probes p WHERE p.target = f.target AND p.at > coalesce(f.t, now() - interval '7 days')) AS at
+               FROM flip f""", (names,)).fetchall()}
         cap = {}
         for r in c.execute(
                 f"""SELECT DISTINCT ON (server_ip, {IST_NIGHT}) server_ip, {IST_NIGHT} AS night, at, safe, tested_max, base_ms, steps, note
