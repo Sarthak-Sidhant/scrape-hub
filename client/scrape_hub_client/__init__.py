@@ -18,6 +18,7 @@ hub's audience, which is how the hub knows the real repository. Outside Actions,
 legacy token) and SCRAPE_HUB_REPO.
 """
 import hashlib
+import random
 import os
 import threading
 import time
@@ -283,7 +284,7 @@ class HubClient(_Auth):
                     box["error"] = e
                     done.set()
 
-    def upload_many(self, files, attempts=3):
+    def upload_many(self, files, attempts=8):
         """Store files in the hub's object storage. files: [(path, bytes, content_type)]; path is relative to this project.
 
         One call to the hub gets a one-time upload link per file; the bytes then go straight to storage (the hub never sees them).
@@ -302,9 +303,12 @@ class HubClient(_Auth):
                     if r.status_code in (200, 201) and (not etag or etag == md5):
                         break
                     last = RuntimeError(f"upload of {path}: HTTP {r.status_code}, etag {etag or '-'} vs md5 {md5}")
+                    if r.status_code in (429, 500, 503):        # storage says slow down (B2: 503 SlowDown): wait it out, never give up quickly
+                        self.metric("upload_slowdown")
                 except requests.RequestException as e:
                     last = e
-                time.sleep(2 ** i)
+                if i < attempts - 1:
+                    time.sleep(min(60.0, 2 ** i) * random.uniform(0.5, 1.5))     # 1, 2, 4 ... 60 s with jitter: about 3 minutes in all
             else:
                 self.metric("upload_failed")
                 raise last

@@ -1184,6 +1184,21 @@ def all_totals(c):
     return {"running": r["running"], "stalled": r["stalled"], "rate_now": rate}
 
 
+# Since this moment every GePNIC crawl run downloads documents (the first ~1M tenders were saved without them and are being redone), so a
+# record saved after it is a tender with its documents: the dashboard's crawl progress counts those, not the tenders of finished windows.
+GEPNIC_DOCS_SINCE = "2026-10-19 20:31:00+00"
+_docs_cache = [0.0, 0]
+
+
+def gepnic_with_docs(c):
+    """Tenders saved with their documents (cached a minute: it counts over a million rows)."""
+    if time.time() - _docs_cache[0] > 60:
+        _docs_cache[1] = c.execute("""SELECT count(*)::bigint AS n FROM records WHERE project LIKE 'gepnic-%%' AND project NOT LIKE '%%-plan'
+                                      AND scraped_at >= %s""", (GEPNIC_DOCS_SINCE,)).fetchone()["n"]
+        _docs_cache[0] = time.time()
+    return _docs_cache[1]
+
+
 def gepnic_summary(c):
     """The many-portal scrape (projects gepnic-<slug> and gepnic-<slug>-plan) as one card: counting and crawling progress, rate, runners."""
     q = c.execute("""SELECT (project LIKE '%-plan') AS plan, status, count(*)::int AS n, coalesce(sum(fetched), 0)::bigint AS fetched,
@@ -1203,14 +1218,16 @@ def gepnic_summary(c):
     accounts = {r["repository"].split("/")[0]: r["n"] for r in c.execute(
         """SELECT repository, count(*)::int AS n FROM runs WHERE project LIKE 'gepnic-%%' AND state='running'
            AND last_seen >= now() - make_interval(secs => %s) GROUP BY 1""", (config.STALL_AFTER_S,)).fetchall()}
-    left = sum(r["expected"] for k, r in ten.items() if k != "done")      # tenders still expected in windows not done yet
+    expected = sum(r["expected"] for r in ten.values())
+    with_docs = gepnic_with_docs(c)
+    left = max(0, expected - with_docs)      # tenders still to save with their documents
     rate10 = c.execute("""SELECT coalesce(sum(records), 0)::float / 10 AS r FROM batches WHERE at >= now() - interval '10 minutes'
                           AND project LIKE 'gepnic-%' AND project NOT LIKE '%-plan'""").fetchone()["r"]
     return {"portals": portals, "running": runs["counting"] + runs["crawling"], "counting_runs": runs["counting"], "crawling_runs": runs["crawling"],
             "accounts": accounts, "tenders_left": left, "rate_10m": rate10, "eta_s": int(left / rate10 * 60) if rate10 > 0 and left else None,
             "count": {"done": n(plan, "done"), "open": n(plan, "pending") + n(plan, "claimed"), "failed": n(plan, "failed"), "per_min": counted / 5},
             "crawl": {"done": n(ten, "done"), "open": n(ten, "pending") + n(ten, "claimed"), "failed": n(ten, "failed"),
-                      "expected": sum(r["expected"] for r in ten.values()), "fetched": ten["done"]["fetched"] if "done" in ten else 0},
+                      "expected": expected, "fetched": ten["done"]["fetched"] if "done" in ten else 0, "with_docs": with_docs},
             "stored": stored, "rate_now": rate}
 
 
