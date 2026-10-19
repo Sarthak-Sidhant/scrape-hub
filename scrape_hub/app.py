@@ -228,7 +228,7 @@ class UploadFile(BaseModel):
 
 
 class UploadRequest(BaseModel):
-    files: list[UploadFile] = Field(min_length=1, max_length=60)
+    files: list[UploadFile] = Field(min_length=1, max_length=300)    # clients batch several tenders' files into one call
 
 
 class BackfillTodo(BaseModel):

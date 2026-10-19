@@ -68,3 +68,26 @@ def test_failures_and_clears_travel_with_the_next_flush_and_survive_a_failed_sen
     c.flush()                                                                   # the retry carries the same items
     assert sent[1]["failures"] == [{"kind": "document", "key": "t1/report.pdf", "reason": "portal refused", "detail": {"org_name": "DRDO"}}]
     assert sent[1]["clear"] == [{"kind": "document", "key": "t2/ok.pdf"}]
+
+
+def test_upload_link_requests_from_many_threads_go_to_the_hub_together(monkeypatch):
+    c = make_client(monkeypatch, [])
+    calls = []
+
+    def fake_call(method, path, body=None, retries=4):
+        calls.append(len(body["files"]))
+        return {"urls": [{"path": f["path"], "key": "proj/" + f["path"], "url": "https://b2/" + f["path"], "headers": {}} for f in body["files"]]}
+    c.call = fake_call
+    monkeypatch.setattr(shc.requests, "put", lambda url, data, headers, timeout: FakeResp(200, hashlib.md5(data).hexdigest()))
+    out, start = {}, shc.threading.Event()
+
+    def worker(i):
+        start.wait()
+        out[i] = c.upload_many([(f"pages/t{i}.json.gz", b"x" * i, "application/gzip"), (f"docs/t{i}/01_a.pdf", b"y", "application/pdf")])
+    ts = [shc.threading.Thread(target=worker, args=(i,)) for i in range(12)]
+    [t.start() for t in ts]
+    start.set()
+    [t.join() for t in ts]
+    assert sum(calls) == 24 and len(calls) <= 3                         # 12 tenders' links in a handful of hub calls, not 12
+    for i in range(12):                                                  # and each thread got exactly its own links back
+        assert [u["key"] for u in out[i]] == [f"proj/pages/t{i}.json.gz", f"proj/docs/t{i}/01_a.pdf"]

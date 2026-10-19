@@ -240,6 +240,49 @@ class HubClient(_Auth):
         """How many tenders of this organisation and date window the hub already holds with a real title."""
         return self.call("POST", f"/api/v1/runs/{self.run_id}/window-stored", {"org_id": str(org_id), "from_date": from_date, "to_date": to_date})["stored"]
 
+    # Upload links: worker threads ask at almost the same moment, so requests arriving within LINK_WAIT seconds of each other are sent to
+    # the hub as one call (up to LINK_MAX files). At thousands of tenders a minute this cuts the hub's request load several times over.
+    LINK_WAIT, LINK_MAX = 0.2, 250
+
+    def _links(self, files):
+        if not hasattr(self, "_link_q"):
+            with self.lock:
+                if not hasattr(self, "_link_q"):
+                    import queue
+                    self._link_q = queue.Queue()
+                    threading.Thread(target=self._link_loop, daemon=True).start()
+        done, box = threading.Event(), {}
+        self._link_q.put((files, done, box))
+        done.wait()
+        if "error" in box:
+            raise box["error"]
+        return box["links"]
+
+    def _link_loop(self):
+        import queue
+        while True:
+            batch = [self._link_q.get()]
+            deadline = time.time() + self.LINK_WAIT
+            while sum(len(f) for f, _, _ in batch) < self.LINK_MAX:
+                left = deadline - time.time()
+                if left <= 0:
+                    break
+                try:
+                    batch.append(self._link_q.get(timeout=left))
+                except queue.Empty:
+                    break
+            try:
+                links = self.call("POST", f"/api/v1/runs/{self.run_id}/upload-urls", {"files": [x for f, _, _ in batch for x in f]})["urls"]
+                i = 0
+                for f, done, box in batch:
+                    box["links"] = links[i:i + len(f)]
+                    i += len(f)
+                    done.set()
+            except Exception as e:
+                for _, done, box in batch:
+                    box["error"] = e
+                    done.set()
+
     def upload_many(self, files, attempts=3):
         """Store files in the hub's object storage. files: [(path, bytes, content_type)]; path is relative to this project.
 
@@ -247,8 +290,7 @@ class HubClient(_Auth):
         Each upload is checked against the storage's checksum of what it received. Returns [{path, key, bytes, md5, sha256}].
         Raises if a file still fails after `attempts` tries.
         """
-        links = self.call("POST", f"/api/v1/runs/{self.run_id}/upload-urls",
-                          {"files": [{"path": p, "content_type": ct} for p, _, ct in files]})["urls"]
+        links = self._links([{"path": p, "content_type": ct} for p, _, ct in files])
         out = []
         for (path, data, ctype), link in zip(files, links):
             md5 = hashlib.md5(data).hexdigest()
