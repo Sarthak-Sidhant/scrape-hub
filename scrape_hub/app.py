@@ -29,6 +29,7 @@ WEB = Path(__file__).resolve().parent.parent / "web"
 # failing searches and outages are what hold a portal back, not the clock. Per-project overrides (settings.adaptive.<band>) still work.
 _HAMMER = {"target_s": 3.0, "up": (2, 4), "down": (1, 2), "threads": 16, "windows": 1.0}
 PHASES = {"peak": dict(_HAMMER), "shoulder": dict(_HAMMER), "day": dict(_HAMMER)}
+CAP_CEILING = 40      # the highest window cap the throttle raises a healthy portal to (big state portals fell over at 44-48, 2026-10-19)
 
 
 def ist_phase(hour):
@@ -109,14 +110,30 @@ def adapt_speeds(c, now=None):
         threads, windows = int(st.get("threads", 4)), int(st.get("max_claimed") or max(1, int(ad.get("max_windows", 24)) // 2))
         nt, nw, why = adapt_step(phase, ad, threads, windows, sec, e / n if n else 0.0, fail_frac)
         cap = int(ad.get("max_windows", 24))
-        if why.endswith(": halve") and windows >= 8 and int(windows * 0.8) < cap:
-            # it choked without going down (e.g. West Bengal at 32 windows: 4 s per request, 10% dropped): remember that level too, softer
-            # than an outage (80%, never below 8), so the climb stops short of it next time instead of hitting the same wall every few minutes
+        if why.endswith(": halve") and windows >= 8 and windows >= 0.75 * cap and int(windows * 0.8) < cap:
+            # it choked at (or near) its ceiling without going down (e.g. West Bengal at 32 windows: 4 s per request, 10% dropped): that level
+            # is too much, so the ceiling becomes 80% of it (never below 8). Only near the ceiling: a slow minute far below it says nothing
+            # about the ceiling (2026-10-20: learning from any halve ratcheted a dozen healthy portals down to 8-12 in an hour).
             learned = max(8, int(windows * 0.8))
             c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (learned, p["name"]))
             c.execute("""INSERT INTO adjustments (project, threads_from, threads_to, claimed_from, claimed_to, phase, reason)
                          VALUES (%s,%s,%s,%s,%s,%s,%s)""", (p["name"], threads, threads, windows, windows, phase,
                                                              f"choked at {windows} windows ({why.split(': ', 1)[-1]}): window cap {cap} -> {learned}"))
+            cap = learned
+        # A portal that sits at its ceiling and stays fast earns a higher one: +2 windows after 10 healthy minutes in a row, up to
+        # CAP_CEILING. If that turns out to be too much, the choke and outage rules above take it back down and remember the level.
+        target = float({**PHASES[phase], **(ad.get(phase) or {})}["target_s"])
+        healthy = (sec is not None and sec < 0.6 * target and (e / n if n else 0.0) < 0.01 and fail_frac < 0.05
+                   and windows >= cap and nw >= cap)
+        streak = int(ad.get("healthy_min", 0)) + 1 if healthy else 0
+        if streak >= 10 and cap < CAP_CEILING:
+            raised = min(CAP_CEILING, cap + 2)
+            c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (raised, p["name"]))
+            c.execute("""INSERT INTO adjustments (project, s_per_req, requests, errors, threads_from, threads_to, claimed_from, claimed_to, phase, failed_frac, reason)
+                         VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (p["name"], sec, int(n), int(e), threads, nt, windows, nw, phase, fail_frac,
+                                                                         f"10 healthy minutes at the ceiling ({sec:.1f} s per request): window cap {cap} -> {raised}"))
+            streak = 0
+        c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,healthy_min}', to_jsonb(%s::int)) WHERE name=%s", (streak, p["name"]))
         c.execute("""UPDATE projects SET settings = settings || jsonb_build_object('threads', %s::int, 'max_claimed', %s::int, 'adaptive_at', %s::float8,
                                                                                    'adaptive_phase', %s::text) WHERE name=%s""",
                   (nt, nw, now.timestamp(), phase, p["name"]))

@@ -930,3 +930,37 @@ def test_a_record_stored_without_its_documents_is_not_known(client, clean):
     assert sorted(out["known"]) == ["NODOCS", "WITH"]
     n = client.post(f"/api/v1/runs/{rid}/window-stored", headers=h, json={"org_id": "1", "from_date": "a", "to_date": "b"}).json()
     assert n == {"stored": 2}
+
+
+def _adapt_once(project, settings, n_http, t_http_s, minute):
+    import datetime
+    import json as _json
+    from scrape_hub.app import adapt_speeds
+    with db.conn() as c:
+        rid = c.execute("SELECT id FROM runs WHERE project=%s LIMIT 1", (project,)).fetchone()["id"]
+        if settings is not None:
+            c.execute("UPDATE projects SET settings = %s::jsonb WHERE name=%s", (_json.dumps(settings), project))
+        c.execute("DELETE FROM metrics WHERE project=%s", (project,))
+        c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,%s,'n_http',%s), (%s,%s,'t_http_s',%s)",
+                  (rid, project, n_http, rid, project, t_http_s))
+    with db.conn() as c:
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 3, minute, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
+        return c.execute("SELECT settings FROM projects WHERE name=%s", (project,)).fetchone()["settings"]
+
+
+def test_a_slow_minute_far_below_the_ceiling_does_not_lower_it(client, clean):
+    start(client, project="blip")
+    st = _adapt_once("blip", {"threads": 16, "max_claimed": 12, "adaptive": {"max_windows": 32}}, 200, 1400, 0)
+    assert (st["max_claimed"], st["adaptive"]["max_windows"]) == (6, 32)        # halved, ceiling untouched
+
+
+def test_a_fast_portal_at_its_ceiling_earns_a_higher_one(client, clean):
+    from scrape_hub.app import CAP_CEILING
+    start(client, project="fast")
+    st = _adapt_once("fast", {"threads": 16, "max_claimed": 32, "adaptive": {"max_windows": 32}}, 200, 100, 0)
+    for m in range(1, 10):
+        assert st["adaptive"]["max_windows"] == 32
+        st = _adapt_once("fast", None, 200, 100, m)
+    assert st["adaptive"]["max_windows"] == 34 and st["adaptive"]["healthy_min"] == 0     # 10 healthy minutes: +2
+    st = _adapt_once("fast", {**st, "max_claimed": CAP_CEILING, "adaptive": {"max_windows": CAP_CEILING, "healthy_min": 9}}, 200, 100, 20)
+    assert st["adaptive"]["max_windows"] == CAP_CEILING                          # never above the ceiling
