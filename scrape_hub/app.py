@@ -108,6 +108,15 @@ def adapt_speeds(c, now=None):
         fail_frac = f / (f + d) if f + d >= 5 else 0.0
         threads, windows = int(st.get("threads", 4)), int(st.get("max_claimed") or max(1, int(ad.get("max_windows", 24)) // 2))
         nt, nw, why = adapt_step(phase, ad, threads, windows, sec, e / n if n else 0.0, fail_frac)
+        cap = int(ad.get("max_windows", 24))
+        if why.endswith(": halve") and windows >= 8 and int(windows * 0.8) < cap:
+            # it choked without going down (e.g. West Bengal at 32 windows: 4 s per request, 10% dropped): remember that level too, softer
+            # than an outage (80%, never below 8), so the climb stops short of it next time instead of hitting the same wall every few minutes
+            learned = max(8, int(windows * 0.8))
+            c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (learned, p["name"]))
+            c.execute("""INSERT INTO adjustments (project, threads_from, threads_to, claimed_from, claimed_to, phase, reason)
+                         VALUES (%s,%s,%s,%s,%s,%s,%s)""", (p["name"], threads, threads, windows, windows, phase,
+                                                             f"choked at {windows} windows ({why.split(': ', 1)[-1]}): window cap {cap} -> {learned}"))
         c.execute("""UPDATE projects SET settings = settings || jsonb_build_object('threads', %s::int, 'max_claimed', %s::int, 'adaptive_at', %s::float8,
                                                                                    'adaptive_phase', %s::text) WHERE name=%s""",
                   (nt, nw, now.timestamp(), phase, p["name"]))
@@ -446,6 +455,13 @@ def replace_queue(name: str, body: QueueReplace, who: Caller = Depends(caller)):
     return {"removed": len(keys), "added": added}
 
 
+# A record counts as stored (so runners skip it) only when it is a real capture: a title, covers on its details page (an empty one is the
+# portal's 'session expired' page), and its documents fetched. Records from a run without documents (status not_stored) are fetched again.
+STORED_SQL = """coalesce(data->'details'->'fields'->>'tender_title', '') <> ''
+    AND (NOT (data->'details' ? 'sections') OR jsonb_array_length(coalesce(data->'details'->'sections'->'covers', '[]'::jsonb)) > 0)
+    AND NOT coalesce(data->'details'->'documents', '[]'::jsonb) @> '[{"status": "not_stored"}]'::jsonb"""
+
+
 @app.post("/api/v1/runs/{run_id}/known-records")
 def known_records(run_id: int, body: KnownReq, request: Request, who: Caller = Depends(caller)):
     """Which of these record ids are already stored as a real tender (an empty title, or a details page with no covers, is a failed capture, e.g. the portal's 'session expired' or 'Stale Session' page, and is fetched again), so a scraper resuming a window can skip them."""
@@ -453,7 +469,7 @@ def known_records(run_id: int, body: KnownReq, request: Request, who: Caller = D
         run = own_run(c, run_id, who)
         seen(c, run_id, request)
         rows = c.execute("""SELECT record_id FROM records WHERE project=%s AND record_id = ANY(%s)
-                            AND coalesce(data->'details'->'fields'->>'tender_title', '') <> '' AND (NOT (data->'details' ? 'sections') OR jsonb_array_length(coalesce(data->'details'->'sections'->'covers', '[]'::jsonb)) > 0)""", (run["project"], body.ids)).fetchall()
+                            AND """ + STORED_SQL, (run["project"], body.ids)).fetchall()
     return {"known": [r["record_id"] for r in rows]}
 
 
@@ -465,7 +481,7 @@ def window_stored(run_id: int, body: WindowReq, request: Request, who: Caller = 
         run = own_run(c, run_id, who)
         seen(c, run_id, request)
         n = c.execute("""SELECT count(*) AS n FROM records WHERE project=%s AND data->>'org_id'=%s AND data->'window'->>0=%s
-                         AND data->'window'->>1=%s AND coalesce(data->'details'->'fields'->>'tender_title', '') <> '' AND (NOT (data->'details' ? 'sections') OR jsonb_array_length(coalesce(data->'details'->'sections'->'covers', '[]'::jsonb)) > 0)""",
+                         AND data->'window'->>1=%s AND """ + STORED_SQL,
                       (run["project"], body.org_id, body.from_date, body.to_date)).fetchone()["n"]
     return {"stored": n}
 

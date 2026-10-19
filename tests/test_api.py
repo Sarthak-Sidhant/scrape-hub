@@ -899,3 +899,34 @@ def test_climb_is_gentle_near_the_ceiling():
     from scrape_hub.app import adapt_step
     assert adapt_step("peak", {"max_windows": 40}, 8, 12, 0.8, 0, 0)[:2] == (10, 16)      # far below: +4 (or a quarter)
     assert adapt_step("peak", {"max_windows": 40}, 8, 30, 0.8, 0, 0)[:2] == (10, 32)      # above 60% of the cap: +2
+
+
+def test_a_portal_that_chokes_without_going_down_gets_a_softer_learned_cap(client, clean):
+    import datetime
+    from scrape_hub.app import adapt_speeds
+    rid = start(client, project="choke")
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"threads": 16, "max_claimed": 32, "adaptive": {"max_windows": 32}}' WHERE name='choke'""")
+        c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,'choke','n_http',200), (%s,'choke','t_http_s',1400)", (rid, rid))
+    with db.conn() as c:
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 2, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
+        st = c.execute("SELECT settings FROM projects WHERE name='choke'").fetchone()["settings"]
+        reasons = [r["reason"] for r in c.execute("SELECT reason FROM adjustments ORDER BY at").fetchall()]
+    assert (st["threads"], st["max_claimed"], st["adaptive"]["max_windows"]) == (8, 16, 25)     # halved, and the cap is 80% of 32
+    assert any("choked at 32 windows" in r for r in reasons)
+
+
+def test_a_record_stored_without_its_documents_is_not_known(client, clean):
+    h = hdr()
+    rid = start(client, project="nodocs")
+    covers = {"covers": [{"cover": "Fee"}]}
+    client.post(f"/api/v1/runs/{rid}/batches", headers=h, json={"records": [
+        {"record_id": "WITH", "data": {"org_id": "1", "window": ["a", "b"], "details": {"fields": {"tender_title": "T"}, "sections": covers,
+                                                                                   "documents": [{"status": "stored"}, {"status": "refused"}]}}},
+        {"record_id": "WITHOUT", "data": {"org_id": "1", "window": ["a", "b"], "details": {"fields": {"tender_title": "T"}, "sections": covers,
+                                                                                      "documents": [{"status": "not_stored", "reason": "not requested"}]}}},
+        {"record_id": "NODOCS", "data": {"org_id": "1", "window": ["a", "b"], "details": {"fields": {"tender_title": "T"}, "sections": covers, "documents": []}}}]})
+    out = client.post(f"/api/v1/runs/{rid}/known-records", headers=h, json={"ids": ["WITH", "WITHOUT", "NODOCS"]}).json()
+    assert sorted(out["known"]) == ["NODOCS", "WITH"]
+    n = client.post(f"/api/v1/runs/{rid}/window-stored", headers=h, json={"org_id": "1", "from_date": "a", "to_date": "b"}).json()
+    assert n == {"stored": 2}
