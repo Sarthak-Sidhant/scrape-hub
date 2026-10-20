@@ -1007,3 +1007,11 @@ def test_storage_samples_sizes_rolls_up_uploads_and_reports(client, clean, login
     assert (led["store"], led["bytes"], led["files"]) == ("b2", 5000000, 5)
     r = client.get("/api/storage").json()
     assert r["database"]["bytes"] > 0 and r["database"]["disk_total"] > 0
+
+
+def test_a_portal_is_not_raised_back_to_where_it_fell(client, clean):
+    start(client, project="wall")
+    st = _adapt_once("wall", {"threads": 16, "max_claimed": 28, "adaptive": {"max_windows": 28, "fell_at": 30, "healthy_min": 9}}, 200, 100, 0)
+    assert st["adaptive"]["max_windows"] == 28                     # roof is 30 - 2 = 28: no raise
+    st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "healthy_min": 9}}, 200, 100, 1)
+    assert st["adaptive"]["max_windows"] == 26

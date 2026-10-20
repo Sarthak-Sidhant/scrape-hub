@@ -62,6 +62,13 @@ def adapt_step(phase, ad, threads, windows, sec, err_frac, fail_frac):
     return threads, windows, f"{phase}: {sec:.1f} s per request: holding"
 
 
+def remember_fall(c, name, ad, windows):
+    """Note the lowest number of windows at which this portal went down or choked (settings.adaptive.fell_at); the raise rule stays
+    below it, so a portal is not walked back into the same wall (2026-10-20: BHEL fell at 34, was raised from 23 back to 33, fell again)."""
+    fell = min(int(ad.get("fell_at") or 10**6), int(windows))
+    c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,fell_at}', to_jsonb(%s::int)) WHERE name=%s", (fell, name))
+
+
 def adapt_speeds(c, now=None):
     """The automatic throttle, once a minute, for projects with settings.adaptive (e.g. {"max_windows": 24}): from what the runners measured
     in the last 3 minutes (seconds per portal request, dropped connections) and the share of windows or count tasks that failed, it moves
@@ -87,6 +94,7 @@ def adapt_speeds(c, now=None):
             if windows >= 8 and windows * 0.7 < cap:
                 learned = max(4, int(windows * 0.7))
                 c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (learned, p["name"]))
+                remember_fall(c, p["name"], ad, windows)
                 c.execute("""INSERT INTO adjustments (project, threads_from, threads_to, claimed_from, claimed_to, phase, reason)
                              VALUES (%s,%s,%s,%s,%s,%s,%s)""", (p["name"], threads, threads, windows, windows, phase,
                                                                  f"{st['probe']} went down at {windows} windows: window cap {cap} -> {learned}"))
@@ -116,6 +124,7 @@ def adapt_speeds(c, now=None):
             # about the ceiling (2026-10-20: learning from any halve ratcheted a dozen healthy portals down to 8-12 in an hour).
             learned = max(8, int(windows * 0.8))
             c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (learned, p["name"]))
+            remember_fall(c, p["name"], ad, windows)
             c.execute("""INSERT INTO adjustments (project, threads_from, threads_to, claimed_from, claimed_to, phase, reason)
                          VALUES (%s,%s,%s,%s,%s,%s,%s)""", (p["name"], threads, threads, windows, windows, phase,
                                                              f"choked at {windows} windows ({why.split(': ', 1)[-1]}): window cap {cap} -> {learned}"))
@@ -126,8 +135,10 @@ def adapt_speeds(c, now=None):
         healthy = (sec is not None and sec < 0.6 * target and (e / n if n else 0.0) < 0.01 and fail_frac < 0.05
                    and windows >= cap and nw >= cap)
         streak = int(ad.get("healthy_min", 0)) + 1 if healthy else 0
-        if streak >= 10 and cap < CAP_CEILING:
-            raised = min(CAP_CEILING, cap + 2)
+        # never climb back to a level where this portal went down or choked before: stop 2 windows short of the lowest such level
+        roof = min(CAP_CEILING, int(ad["fell_at"]) - 2) if ad.get("fell_at") else CAP_CEILING
+        if streak >= 10 and cap < roof:
+            raised = min(roof, cap + 2)
             c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (raised, p["name"]))
             c.execute("""INSERT INTO adjustments (project, s_per_req, requests, errors, threads_from, threads_to, claimed_from, claimed_to, phase, failed_frac, reason)
                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (p["name"], sec, int(n), int(e), threads, nt, windows, nw, phase, fail_frac,
