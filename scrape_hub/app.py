@@ -122,6 +122,13 @@ def adapt_speeds(c, now=None):
                 c.execute("""INSERT INTO adjustments (project, threads_from, threads_to, claimed_from, claimed_to, phase, reason)
                              VALUES (%s,%s,%s,%s,%s,%s,%s)""", (p["name"], threads, threads, windows, windows, phase,
                                                                  f"{st['probe']} went down at {windows} windows: window cap {cap} -> {learned}"))
+            # remember where to come back to: half of what it was really using (once per outage), so a portal that returns healthy
+            # jumps straight back instead of climbing from 1 window through the night
+            if not ad.get("resume_to") and windows_allowed > 1:
+                new_cap = int(c.execute("SELECT settings->'adaptive'->>'max_windows' AS m FROM projects WHERE name=%s", (p["name"],)).fetchone()["m"] or cap)
+                resume = max(1, min(new_cap, int(in_use) or windows_allowed) // 2)
+                c.execute("""UPDATE projects SET settings = jsonb_set(jsonb_set(settings, '{adaptive,resume_to}', to_jsonb(%s::int)),
+                             '{adaptive,resume_t}', to_jsonb(%s::float8)) WHERE name=%s""", (resume, now.timestamp(), p["name"]))
             c.execute("""UPDATE projects SET settings = settings || jsonb_build_object('threads', 1, 'max_claimed', 1, 'adaptive_at', %s::float8,
                                                                                        'adaptive_phase', %s::text) WHERE name=%s""", (now.timestamp(), phase, p["name"]))
             if (threads, windows_allowed) != (1, 1):
@@ -144,6 +151,16 @@ def adapt_speeds(c, now=None):
         fail_frac = f / (f + d) if f + d >= 10 and f >= 3 else 0.0
         threads, windows = int(st.get("threads", 4)), int(st.get("max_claimed") or max(1, int(ad.get("max_windows", 24)) // 2))
         nt, nw, why = adapt_step(phase, ad, threads, windows, sec, e / n if n else 0.0, fail_frac)
+        if ad.get("resume_to"):
+            ph = {**PHASES[phase], **(ad.get(phase) or {})}
+            if sec is not None and sec < float(ph["target_s"]) and (e / n if n else 0.0) < 0.05:
+                # back up and answering well: straight back to half its pre-outage level with full threads
+                rw = min(int(ad["resume_to"]), int(ad.get("max_windows", 24)))
+                if rw > nw:
+                    nt, nw, why = int(ph["threads"]), rw, f"{phase}: back up, {sec:.1f} s per request: resume at {rw} windows"
+                c.execute("UPDATE projects SET settings = settings #- '{adaptive,resume_to}' #- '{adaptive,resume_t}' WHERE name=%s", (p["name"],))
+            elif now.timestamp() - float(ad.get("resume_t") or 0) > 1800:
+                c.execute("UPDATE projects SET settings = settings #- '{adaptive,resume_to}' #- '{adaptive,resume_t}' WHERE name=%s", (p["name"],))
         cap = int(ad.get("max_windows", 24))
         overloaded = sec is not None and (sec > 2 * float({**PHASES[phase], **(ad.get(phase) or {})}["target_s"]) or (e / n if n else 0.0) > 0.05)
         # only real overload (slow answers or dropped connections) teaches a lower limit; failing windows alone just halve for now

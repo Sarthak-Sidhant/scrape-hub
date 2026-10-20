@@ -1107,3 +1107,28 @@ def test_a_slow_window_of_a_live_runner_stays_busy_and_is_not_stolen(client, cle
         c.execute("UPDATE runs SET last_seen = now() - interval '1 hour' WHERE id=%s", (rid,))
     r = client.post(f"/api/v1/runs/{other}/claim", headers=hdr(run_id="2"), json={"project": "slowwin", "limit": 1, "steal": True}).json()
     assert len(r["items"]) == 1                  # its runner went silent: the window is free again
+
+
+def test_a_portal_back_from_an_outage_resumes_at_half_its_level(client, clean):
+    import datetime
+    from scrape_hub.app import adapt_speeds
+    rid = start(client, project="resume")
+    ist = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"probe": "gepnic:r.gov.in", "threads": 6, "max_claimed": 20, "adaptive": {"max_windows": 30, "night": {}}}' WHERE name='resume'""")
+        for i in range(20):
+            c.execute("INSERT INTO queue (project, key, partition_id, status, payload, claimed_by, claimed_at) VALUES ('resume', %s, 0, 'claimed', '{}', %s, now())", (f"w{i}", rid))
+        for _ in range(3):
+            c.execute("INSERT INTO probes (target, ok, ms) VALUES ('gepnic:r.gov.in', false, 20000)")
+    with db.conn() as c:                                                  # down at 20 in use: cap 30 -> 14 (70%), resume at half of that, 7
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 21, 1, 0, tzinfo=ist))
+        st = c.execute("SELECT settings FROM projects WHERE name='resume'").fetchone()["settings"]
+    assert (st["max_claimed"], st["threads"]) == (1, 1) and st["adaptive"]["resume_to"] == 7
+    with db.conn() as c:                                                  # back: two good checks, fast answers
+        c.execute("INSERT INTO probes (target, ok, ms, at) VALUES ('gepnic:r.gov.in', true, 300, now()), ('gepnic:r.gov.in', true, 300, now())")
+        c.execute("DELETE FROM metrics WHERE project='resume'")
+        c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,'resume','n_http',200), (%s,'resume','t_http_s',100)", (rid, rid))
+    with db.conn() as c:
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 21, 1, 5, tzinfo=ist))
+        st = c.execute("SELECT settings FROM projects WHERE name='resume'").fetchone()["settings"]
+    assert st["max_claimed"] == 7 and st["threads"] == 16 and "resume_to" not in st["adaptive"]
