@@ -1020,7 +1020,7 @@ def test_a_portal_is_not_raised_back_to_where_it_fell(client, clean):
     st = _adapt_once("wall", {"threads": 16, "max_claimed": 28, "adaptive": {"max_windows": 28, "fell_at": 30, "fell_at_t": now, "healthy_min": 9}}, 200, 100, 0)
     assert st["adaptive"]["max_windows"] == 28                     # roof is 30 - 2 = 28: no raise
     st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "fell_at_t": now, "healthy_min": 9}}, 200, 100, 1)
-    assert st["adaptive"]["max_windows"] == 28                     # +4 at 0.5 s, still under the roof of 28
+    assert st["adaptive"]["max_windows"] == 26                     # it fell recently: +2 even at 0.5 s
     st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "fell_at_t": now, "healthy_min": 9}}, 200, 300, 2)
     assert st["adaptive"]["max_windows"] == 26
     st = _adapt_once("wall", {"threads": 16, "max_claimed": 28, "adaptive": {"max_windows": 28, "fell_at": 30, "fell_at_t": now - 4 * 3600, "healthy_min": 9}}, 200, 100, 3)
@@ -1073,3 +1073,21 @@ def test_an_outage_with_few_windows_in_use_teaches_nothing(client, clean):
         adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 20, 30, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
         st = c.execute("SELECT settings FROM projects WHERE name='idle'").fetchone()["settings"]
     assert st["adaptive"]["max_windows"] == 40 and "fell_at" not in st["adaptive"] and st["max_claimed"] == 1   # held, but nothing learned
+
+
+def test_an_outage_during_a_nic_wide_problem_teaches_nothing(client, clean):
+    import datetime
+    from scrape_hub.app import adapt_speeds
+    start(client, project="wide")
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"probe": "gepnic:a.gov.in", "threads": 6, "max_claimed": 20, "adaptive": {"max_windows": 30}}' WHERE name='wide'""")
+        for i in range(20):
+            c.execute("INSERT INTO queue (project, key, partition_id, status, payload, claimed_at) VALUES ('wide', %s, 0, 'claimed', '{}', now())", (f"w{i}",))
+        for t in ("gepnic:a.gov.in", "gepnic:b.gov.in", "gepnic:c.gov.in", "gepnic:d.gov.in"):
+            c.execute("INSERT INTO probes (target, ok, ms, at) VALUES (%s, true, 300, now() - interval '30 minutes')", (t,))
+            for _ in range(3):
+                c.execute("INSERT INTO probes (target, ok, ms) VALUES (%s, false, 20000)", (t,))
+    with db.conn() as c:
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 22, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
+        st = c.execute("SELECT settings FROM projects WHERE name='wide'").fetchone()["settings"]
+    assert st["max_claimed"] == 1 and st["adaptive"]["max_windows"] == 30 and "fell_at" not in st["adaptive"]   # held, nothing learned

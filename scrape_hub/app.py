@@ -63,6 +63,18 @@ def adapt_step(phase, ad, threads, windows, sec, err_frac, fail_frac):
     return threads, windows, f"{phase}: {sec:.1f} s per request: holding"
 
 
+NIC_WIDE_PORTALS = 3      # this many other portals down at the same moment means a NIC-wide problem
+
+
+def nic_wide_outage(c):
+    """How many GePNIC portals the hub's checks find down right now (2 or more failed checks in the last 3 minutes), not counting
+    ones that have been down for over an hour (Andaman), so a long outage of one portal does not make every fall look NIC-wide."""
+    return c.execute("""SELECT count(*) AS n FROM (
+                          SELECT target FROM probes WHERE target LIKE 'gepnic:%%' AND at > now() - interval '3 minutes'
+                          GROUP BY target HAVING count(*) FILTER (WHERE NOT ok) >= 2) d
+                        WHERE EXISTS (SELECT 1 FROM probes q WHERE q.target = d.target AND q.ok AND q.at > now() - interval '60 minutes')""").fetchone()["n"]
+
+
 def remember_fall(c, name, ad, windows):
     """Note the lowest number of windows at which this portal went down or choked (settings.adaptive.fell_at); the raise rule stays
     below it, so a portal is not walked back into the same wall (2026-10-20: BHEL fell at 34, was raised from 23 back to 33, fell again)."""
@@ -98,6 +110,11 @@ def adapt_speeds(c, now=None):
             # an outage of its own taught nothing about how much load it takes (2026-10-20: MP "went down at 38" with ~1 in use)
             in_use = c.execute("SELECT count(*) AS n FROM queue WHERE project=%s AND status='claimed'", (p["name"],)).fetchone()["n"]
             windows_allowed, windows = windows, min(windows, int(in_use))
+            # several portals failing at once is NIC's trouble, not this portal's limit: hold, but learn nothing (2026-10-20 evening:
+            # CPPP, MP and Defence went down with no load from us while Kerala, Odisha and UP fell too)
+            wide = nic_wide_outage(c)
+            if wide >= NIC_WIDE_PORTALS:
+                windows = 0
             if windows >= 8 and windows * 0.7 < cap:
                 learned = max(4, int(windows * 0.7))
                 c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (learned, p["name"]))
@@ -130,7 +147,8 @@ def adapt_speeds(c, now=None):
         cap = int(ad.get("max_windows", 24))
         overloaded = sec is not None and (sec > 2 * float({**PHASES[phase], **(ad.get(phase) or {})}["target_s"]) or (e / n if n else 0.0) > 0.05)
         # only real overload (slow answers or dropped connections) teaches a lower limit; failing windows alone just halve for now
-        if why.endswith(": halve") and overloaded and windows >= 8 and windows >= 0.75 * cap and int(windows * 0.8) < cap:
+        if why.endswith(": halve") and overloaded and windows >= 8 and windows >= 0.75 * cap and int(windows * 0.8) < cap \
+                and nic_wide_outage(c) < NIC_WIDE_PORTALS:
             # it choked at (or near) its ceiling without going down (e.g. West Bengal at 32 windows: 4 s per request, 10% dropped): that level
             # is too much, so the ceiling becomes 80% of it (never below 8). Only near the ceiling: a slow minute far below it says nothing
             # about the ceiling (2026-10-20: learning from any halve ratcheted a dozen healthy portals down to 8-12 in an hour).
@@ -152,7 +170,8 @@ def adapt_speeds(c, now=None):
         fell_fresh = ad.get("fell_at") and time.time() - float(ad.get("fell_at_t") or 0) < FELL_MEMORY_S
         roof = min(CAP_CEILING, int(ad["fell_at"]) - 2) if fell_fresh else CAP_CEILING
         if streak >= 10 and cap < roof:
-            raised = min(roof, cap + (4 if sec < 1.0 else 2))       # a portal answering in under a second climbs faster
+            # a portal answering in under a second climbs faster, unless it fell on its own recently: then it nears the edge slowly
+            raised = min(roof, cap + (4 if sec < 1.0 and not fell_fresh else 2))
             c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (raised, p["name"]))
             c.execute("""INSERT INTO adjustments (project, s_per_req, requests, errors, threads_from, threads_to, claimed_from, claimed_to, phase, failed_frac, reason)
                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (p["name"], sec, int(n), int(e), threads, nt, windows, nw, phase, fail_frac,
