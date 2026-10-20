@@ -1,228 +1,176 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex"><title>Scrape hub: throttle</title><link rel="stylesheet" href="/assets/hub.css"><style>
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:10px}
-.stats div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel2)}.stats b{display:block;font-size:20px;line-height:1.2}.stats span{font-size:11px;color:var(--dim)}
-.mk{display:inline-block;width:14px;text-align:center;font-weight:700}.mk.down{color:var(--bad)}.mk.choke{color:var(--warn)}.mk.raise{color:var(--ok)}.mk.halve{color:var(--s2)}
-.heat{position:relative;overflow-x:auto}.heat svg{min-width:720px}
-.mults{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:12px}
-.m{border:1px solid var(--line);border-radius:10px;padding:9px 11px 6px;background:var(--panel2);position:relative;min-width:0}
-.m h3{font-size:12px;margin:0;display:flex;justify-content:space-between;gap:8px}.m h3 span{font-weight:400;color:var(--dim);white-space:nowrap}
-.m .ev{font-size:11px;color:var(--dim);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap}
-.m svg{margin-top:4px}
-.ctrl{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:4px 0 12px}.ctrl .lab{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
-.lgx{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;margin-top:8px;align-items:center}.lgx i{display:inline-block;width:14px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px}
-.ramp{display:inline-flex;gap:1px;vertical-align:middle}.ramp i{width:16px;height:10px;margin:0;border-radius:1px}
-.show{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
-@media (max-width:1000px){.show{grid-template-columns:1fr}}
-.dial{position:relative;max-width:640px;margin:0 auto}.dial svg{width:100%;height:auto}
-.dial .ctr{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;text-align:center}
-.dial .ctr div{max-width:30%}.dial .ctr b{display:block;font-size:clamp(16px,2.4vw,26px);line-height:1.1}.dial .ctr span{font-size:11px;color:var(--dim)}
-.rp-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.rp-top button.play{font:inherit;font-weight:700;font-size:13px;padding:5px 14px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--bg);cursor:pointer;min-width:84px}
-.rp-top input[type=range]{flex:1;min-width:160px;accent-color:var(--accent)}
-.rp-clock{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;margin:8px 0 2px}.rp-clock small{font-size:12px;color:var(--dim);font-weight:400;margin-left:8px}
-.race{position:relative;margin-top:8px}
-.race .r{position:absolute;left:0;right:0;height:18px;display:grid;grid-template-columns:118px minmax(0,1fr) 62px;gap:8px;align-items:center;font-size:11px;transition:top .45s ease}
-.race .r .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}.race .r .v{font-variant-numeric:tabular-nums;color:var(--dim)}
-.race .r .tr{height:12px;background:var(--bar);border-radius:3px;position:relative;overflow:hidden}
-.race .r .tr i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--s1);transition:width .35s ease,background .2s}
-.race .r .tr i.down{background:var(--bad)}.race .r .tr em{position:absolute;top:0;bottom:0;width:2px;background:var(--dim);opacity:.7;transition:left .35s ease}
-.race .r.flash-down .nm{color:var(--bad);font-weight:700}.race .r.flash-choke .nm{color:var(--warn);font-weight:700}.race .r.flash-raise .nm{color:var(--ok);font-weight:700}
-.ticker{list-style:none;margin:10px 0 0;padding:0;font-size:12px;min-height:126px}.ticker li{padding:2px 0;border-top:1px solid var(--line);display:flex;gap:8px}.ticker li:first-child{border-top:0}
-.ticker time{color:var(--dim);flex:none;font-variant-numeric:tabular-nums}
-@media (prefers-reduced-motion:reduce){.race .r,.race .r .tr i,.race .r .tr em{transition:none}}
+.explain{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;margin-top:8px}
+.explain div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel2);font-size:12px}.explain b{display:block;margin-bottom:2px}
+.why{color:var(--dim);white-space:normal;min-width:240px;max-width:420px}
+.tbl td,.tbl th{white-space:nowrap}.tbl td.why{white-space:normal}
+.tbl tr.pick{cursor:pointer}.tbl tr.pick:hover td{background:var(--panel2)}
+.pill2{display:inline-block;padding:0 8px;border-radius:99px;font-size:11px;font-weight:600;border:1px solid currentColor}
+.p-down{color:var(--bad)}.p-held{color:var(--warn)}.p-full{color:var(--ok)}.p-done{color:var(--dim)}
+.mk{font-weight:700}.mk.down{color:var(--bad)}.mk.choke{color:var(--warn)}.mk.raise{color:var(--ok)}
+.feed{list-style:none;margin:0;padding:0;font-size:12px}.feed li{display:grid;grid-template-columns:72px 16px minmax(0,1fr);gap:8px;padding:5px 0;border-top:1px solid var(--line)}
+.feed li:first-child{border-top:0}.feed time{color:var(--dim);font-variant-numeric:tabular-nums}.feed .dim{font-size:11px}
+.pickrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:6px}
+.pickrow select{font:inherit;font-size:13px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--text)}
+.stack3 h3{font-size:11px;margin:12px 0 2px;color:var(--dim);font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.cost .lr{display:grid;grid-template-columns:minmax(90px,160px) minmax(0,1fr) 150px;gap:10px;align-items:center;padding:3px 0;font-size:12px}
+.cost .lr .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cost .lr .n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.cost .track{height:12px;position:relative;background:var(--bar);border-radius:3px}.cost .track i{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
+.big{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px}.big div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel2)}
+.big b{display:block;font-size:20px}.big span{font-size:11px;color:var(--dim)}
+@media (max-width:700px){.cost .lr .n .dim{display:none}header .sp{display:none}header>span.dim{flex:1 1 100%;font-size:11px}.cost .lr{grid-template-columns:90px minmax(0,1fr) 92px}.feed li{grid-template-columns:60px 14px minmax(0,1fr)}}
 </style></head><body>
-<header><h1>THROTTLE</h1><!--NAV--><span class="sp"></span><span class="dim" id="updated">loading</span></header>
+<header><h1>THROTTLE</h1><!--NAV--><span class="sp"></span><div class="seg" id="range" role="group" aria-label="time range"></div><span class="dim" id="updated">loading</span></header>
 <main>
-<section><div class="head"><div><h2>How the throttle drove every portal</h2>
-<p class="lede">Every minute the hub looks at how each portal answered our runners and sets two dials: <b>windows</b> (searches in flight, the load that knocks a portal over) and <b>threads</b> per process. It climbs while answers are fast, eases off when they slow, halves when they are bad, holds everything when the portal stops answering, and learns a lower ceiling where a portal choked or fell. This page draws every one of those decisions.</p></div>
-<div class="seg" id="range" role="group" aria-label="time range"></div></div>
-<div class="stats" id="stats"></div></section>
+<section><h2>What the throttle does</h2>
+<p class="lede">The runners never decide how hard to hit a portal; the hub does, once a minute, for each portal separately.</p>
+<div class="explain">
+<div><b>Searches open ("windows")</b>How many search sessions our runners may keep open on the portal at once. This is the load that knocks portals over, so it is the main dial.</div>
+<div><b>Limit</b>The most searches the throttle will ever allow on that portal. It starts at 32 (6 for the small PSU portals) and moves up to 40 or down as the portal shows what it can take.</div>
+<div><b>Every minute</b>Answers under 2.1 s: allow more. 3-6 s: allow a little less. Over 6 s or many dropped connections: halve. Portal not answering: hold everything, then restart from 1.</div>
+<div><b>Learning</b>Falls over: limit cut to 70% of where it fell. Chokes near the limit: cut to 80%. Fast at its limit for 10 minutes: +2. It never climbs back to a level where it fell before.</div>
+</div></section>
 
+<section><div class="head"><div><h2>Each portal right now</h2><p class="lede">Held-back portals first. "Why" is the throttle's own reason for the limit. Click a row to see that portal in detail below.</p></div></div>
+<div class="scroll"><table class="tbl" id="now"></table></div></section>
 
-<div class="show">
-<section><div class="head"><div><h2>The 24-hour dial</h2><p class="lede">Every portal is a ring, biggest on the outside; time runs clockwise from the gap at the top. Brighter means more windows allowed, red means the portal was not answering, and the marks are its falls, chokes and raises. Hover anywhere on a ring.</p></div></div>
-<div class="dial chart" id="dial"></div></section>
-<section><div class="head"><div><h2>Replay</h2><p class="lede">Play the throttle back: each bar is the windows allowed on a portal at that moment (the tick is its ceiling), re-sorted as it moves, with every notable decision as it happened.</p></div></div>
-<div class="rp-top"><button class="play" id="play">▶ Play</button><input type="range" id="scrub" min="0" max="1000" value="1000" aria-label="time"><div class="seg" id="speed" role="group" aria-label="replay speed"></div></div>
-<div class="rp-clock" id="clock"></div><div class="chart" id="fleetline"></div>
-<div class="race" id="race"></div><ul class="ticker" id="ticker"></ul></section>
+<section id="detail"><div class="head"><div><h2>One portal in detail</h2><p class="lede">Three charts on the same clock, read top to bottom: what the throttle allowed, how fast the portal answered (what it reacted to), and what we saved.</p></div></div>
+<div class="pickrow"><label for="pick" class="dim">Portal</label><select id="pick"></select><span class="dim" id="picksum"></span></div>
+<div class="stack3"><h3>Searches allowed (the step line), its limit (dashed) and outages (red)</h3><div class="chart" id="c1"></div>
+<h3>Answer time per request (what the throttle reacts to): under 3 s it allows more, over 6 s it halves</h3><div class="chart" id="c2"></div>
+<h3>Tenders saved per minute</h3><div class="chart" id="c3"></div></div></section>
+
+<div class="grid2">
+<section><div class="head"><div><h2>What happened, when</h2><p class="lede">Newest first. Raises in a row are folded into one line.</p></div>
+<div class="seg" id="feedf" role="group" aria-label="filter"></div></div><ul class="feed" id="feed"></ul></section>
+<section class="cost"><div class="head"><div><h2>Is it costing us speed?</h2><p class="lede">Estimates. "At its limit" scales each portal's current tenders per search up to its limit; outage losses use its average rate over the last hour.</p></div></div>
+<div class="big" id="costbig"></div><div id="costbars"></div></section>
 </div>
-<section><div class="head"><div><h2>The fleet at a glance</h2>
-<p class="lede">One row per portal, one column per time slice. The brighter the cell, the more windows the throttle allowed; red is the portal not answering; a mark on a cell is a decision worth knowing about. Hover for the details.</p></div>
-<div class="seg" id="hsort" role="group" aria-label="sort rows"></div></div>
-<div class="heat chart" id="heat"></div>
-<div class="lgx"><span>windows allowed</span><span class="ramp"><i style="background:var(--q1)"></i><i style="background:var(--q2)"></i><i style="background:var(--q3)"></i><i style="background:var(--q4)"></i><i style="background:var(--q5)"></i><i style="background:var(--q6)"></i></span><span class="dim">1 → 40</span>
-<span><i style="background:var(--bad)"></i>not answering</span><span><span class="mk down">▼</span>went down (cap cut to 70%)</span><span><span class="mk choke">◆</span>choked (cap cut to 80%)</span><span><span class="mk raise">▲</span>earned +2 windows</span></div></section>
-
-<section><div class="head"><div><h2>Portal by portal</h2>
-<p class="lede">The step line is the windows the throttle allowed, the dashed line the ceiling it may climb to, red bands the portal's outages. A portal that keeps hitting its ceiling and staying fast earns a higher one; one that chokes or falls gets a lower one and remembers the level.</p></div></div>
-<div class="ctrl"><span class="lab">Sort</span><div class="seg" id="msort" role="group" aria-label="sort portals"></div><span class="lab">Show</span><div class="seg" id="mfilt" role="group" aria-label="filter portals"></div></div>
-<div class="mults" id="mults"></div></section>
 </main>
 <script src="/assets/charts.js"></script>
 <script>
 const {esc,fmt,ago,j}=Hub;const $=id=>document.getElementById(id);
 const store=(k,v)=>{try{localStorage.setItem("thr."+k,v)}catch(e){}},load=(k,d)=>{try{return localStorage.getItem("thr."+k)??d}catch(e){return d}};
-const RANGES={"6h":6,"24h":24,"3d":72};let RANGE=load("range","24h"),HSORT=load("hsort","peak"),MSORT=load("msort","events"),MFILT=load("mfilt","eventful"),D=null,SC=null;
-const tf=t=>{const d=new Date(t*1000);return (RANGES[RANGE]>24?d.toLocaleDateString([],{day:"numeric",month:"short"})+" ":"")+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})};
-const KIND={more:"climbed",ease:"eased off",halve:"halved",hold:"held: portal down",down:"went down",choke:"choked",raise:"earned a higher cap",restore:"cap restored",other:"changed"};
+const RANGES={"6h":6,"24h":24,"3d":72};let RANGE=load("range","24h"),PICK=load("pick",""),FEEDF=load("feedf","incidents"),D=null,SC=null,TP=null;
+const clock=t=>{const d=new Date(t*1000);return (RANGES[RANGE]>24?d.toLocaleDateString([],{day:"numeric",month:"short"})+" ":"")+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})};
+const mins=s=>{const m=Math.round(s/60);return m<60?m+" min":Math.floor(m/60)+" h "+String(m%60).padStart(2,"0")+" min"};
 function seg(el,items,cur,key,cb){el.innerHTML=items.map(([k,l])=>`<button data-k="${k}" aria-pressed="${k===cur}">${l}</button>`).join("");
  el.onclick=e=>{const b=e.target.closest("[data-k]");if(!b)return;el.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x===b));store(key,b.dataset.k);cb(b.dataset.k)}}
-function title(s){const x=SC&&SC.sources.find(y=>y.family===s.family&&y.source===s.source);return x?x.title:s.source}
-// windows and threads in force at time t: the last decision at or before t
-function at(s,t){let w=s.start?s.start.windows:null,th=s.start?s.start.threads:null,k=null,sr=null;   // nothing known before the first decision
- for(const p of s.steps){if(p[0]>t)break;w=p[1];th=p[2];k=p[3];sr=p[4]}
- return {w,th,k,sr}}
+const key=s=>s.family+"/"+s.source;
+const live=s=>SC&&SC.sources.find(x=>x.family===s.family&&x.source===s.source);
+const title=s=>{const x=live(s);return x?x.title:s.source};
 function capAt(s,t){let c=s.caps.length?s.caps[0][1]:s.now.cap;for(const p of s.caps){if(p[0]>t)break;c=p[1]}return c}
-const downAt=(s,a,b)=>s.outages.some(o=>o[0]<b&&o[1]>a);
-const peak=s=>Math.max(0,...s.steps.map(p=>p[1]||0));
-const evCount=(s,k)=>s.events.filter(e=>e[1]===k).length;
+const ev=(s,k)=>s.events.filter(e=>e[1]===k);
+const nums=r=>(r.match(/\d+/g)||[]).map(Number);
 
-function stats(){
- const all=D.sources,steps=all.flatMap(s=>s.steps),ev=all.flatMap(s=>s.events),n=k=>ev.filter(e=>e[1]===k).length+steps.filter(p=>p[3]===k&&!["halve","hold"].includes(k)).length;
- const downMin=all.reduce((a,s)=>a+s.outages.reduce((b,o)=>b+(o[1]-o[0])/60,0),0);
- $("stats").innerHTML=[[fmt(steps.length+ev.filter(e=>["down","choke","raise","restore"].includes(e[1])).length),"decisions"],[fmt(steps.filter(p=>p[3]==="more").length),"climbs"],
-  [fmt(steps.filter(p=>p[3]==="ease").length),"eased off"],[fmt(evCount({events:ev},"halve")),"halved"],[`<span class="mk raise">▲</span>${evCount({events:ev},"raise")}`,"higher caps earned"],
-  [`<span class="mk choke">◆</span>${evCount({events:ev},"choke")}`,"chokes learned"],[`<span class="mk down">▼</span>${evCount({events:ev},"down")}`,"portals went down"],
-  [Math.round(downMin/60)+" h","portal downtime in all"]].map(([b,l])=>`<div><b>${b}</b><span>${l}</span></div>`).join("")}
+// one sentence: why the limit is where it is
+function why(s){
+ const cap=s.now.cap,lastCap=s.events.filter(e=>["down","choke","raise","restore"].includes(e[1])).pop();
+ const fell=s.now.fell_at?` It is never raised past ${s.now.fell_at-2}, because it fell at ${s.now.fell_at}.`:"";
+ if(!lastCap)return cap?`Starting limit (${cap}); nothing has moved it in this range.${fell}`:"No limit set.";
+ const [t,k,r]=lastCap,n=nums(r);
+ if(k==="down")return `Went down at ${clock(t)} while ${n[0]} searches were open, so the limit was cut to ${n[2]??cap}.${fell}`;
+ if(k==="choke")return `Answers slowed badly at ${clock(t)} with ${n[0]} searches open (${(r.match(/\(([^)]*)\)/)||[,""])[1].replace(/: halve$/,"")}), so the limit was cut to ${n.slice(-1)[0]}.${fell}`;
+ if(k==="raise")return `Earned a higher limit at ${clock(t)}: it stayed fast at its limit for 10 minutes.${fell}`;
+ return `Limit restored to ${cap} at ${clock(t)} after a throttle bug was fixed.${fell}`}
+function state(s){const x=live(s);if(x&&["parked","done"].includes(x.status))return["done",x.status==="parked"?"parked":"finished"];
+ if(s.outages.some(o=>o[2])||(x&&x.status==="down"))return["down","down: held"];
+ const w=s.now.windows||0,c=s.now.cap||0;if(c&&w<c*.75)return["held",`held at ${w} of ${c}`];return["full","at its limit"]}
 
-function heat(){
- const S=D.sources.filter(s=>s.family==="gepnic"&&(s.steps.length||s.events.length||s.outages.length));
- const order={peak:(a,b)=>peak(b)-peak(a),events:(a,b)=>b.events.length-a.events.length,down:(a,b)=>b.outages.reduce((x,o)=>x+o[1]-o[0],0)-a.outages.reduce((x,o)=>x+o[1]-o[0],0),name:(a,b)=>title(a).localeCompare(title(b))};
- S.sort(order[HSORT]);
- const el=$("heat"),W=Math.max(720,el.clientWidth),L=150,R=8,T=22,rh=Math.max(11,Math.min(16,Math.floor(560/Math.max(1,S.length)))),H=T+S.length*rh+22;
- const t0=D.since,t1=D.now,slice=RANGES[RANGE]<=6?120:RANGES[RANGE]<=24?600:1800,n=Math.ceil((t1-t0)/slice),cw=(W-L-R)/n;
- const ramp=["--q1","--q2","--q3","--q4","--q5","--q6"],col=w=>w==null||w<=0?"var(--bar)":`var(${ramp[Math.min(5,Math.floor(Math.sqrt(Math.min(40,w)/40)*6))]})`;
- let g=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="windows allowed per portal over time">`;
- const ticks=6;for(let k=0;k<=ticks;k++){const t=t0+(t1-t0)*k/ticks,x=L+(W-L-R)*k/ticks;g+=`<text x="${x}" y="12" text-anchor="${k===0?"start":k===ticks?"end":"middle"}" class="ax">${k===ticks?"now":tf(t)}</text>`}
- S.forEach((s,ri)=>{const y=T+ri*rh;g+=`<text x="${L-8}" y="${y+rh/2+3.5}" text-anchor="end" class="ax" style="fill:var(--text)">${esc(title(s).slice(0,20))}</text>`;
-  for(let i=0;i<n;i++){const a=t0+i*slice,b=a+slice,v=at(s,b),dn=downAt(s,a,b);
-   g+=`<rect data-r="${ri}" data-i="${i}" x="${(L+i*cw).toFixed(1)}" y="${y+1}" width="${Math.max(.5,cw-.6).toFixed(1)}" height="${rh-2}" fill="${dn?"var(--bad)":col(v.w)}"/>`}
-  s.events.forEach(e=>{if(!["down","choke","raise"].includes(e[1]))return;const x=L+(e[0]-t0)/(t1-t0)*(W-L-R),c={down:"--bad",choke:"--warn",raise:"--ok"}[e[1]];
-   g+=`<text x="${x.toFixed(1)}" y="${y+rh-3}" text-anchor="middle" font-size="${rh-3}" fill="var(${c})" stroke="var(--panel)" stroke-width="2" paint-order="stroke" pointer-events="none">${{down:"▼",choke:"◆",raise:"▲"}[e[1]]}</text>`})});
- el.innerHTML=g+`<rect class="hit" x="0" y="0" width="0" height="0"/></svg>`;
- const svg=el.querySelector("svg"),tp=Hub.tip(el);
- svg.addEventListener("pointermove",ev=>{const r=ev.target.closest("rect[data-r]");if(!r)return tp.hide();const s=S[+r.dataset.r],i=+r.dataset.i,a=t0+i*slice,b=a+slice,v=at(s,b);
-  const evs=s.events.filter(e=>e[0]>=a&&e[0]<b),rect=svg.getBoundingClientRect();
-  tp.show(ev.clientX-rect.left,ev.clientY-rect.top,`${title(s)} · ${tf(a)}–${tf(b)}`,[{value:v.w??"-",label:"windows allowed"},{value:v.th??"-",label:"threads per process"},{value:capAt(s,b)??"-",label:"ceiling"}]
-   .concat(v.sr!=null?[{value:v.sr+" s",label:"per request then"}]:[]).concat(downAt(s,a,b)?[{color:"var(--bad)",value:"down",label:"portal not answering"}]:[]).concat(evs.map(e=>e[2])))});
- svg.addEventListener("pointerleave",()=>tp.hide())}
+function nowTable(){
+ const S=D.sources.filter(s=>s.family==="gepnic").map(s=>({s,st:state(s),x:live(s)}));
+ const rank={down:0,held:1,full:2,done:3};S.sort((a,b)=>rank[a.st[0]]-rank[b.st[0]]||((a.s.now.windows||0)/(a.s.now.cap||1))-((b.s.now.windows||0)/(b.s.now.cap||1)));
+ $("now").innerHTML=`<tr><th>portal</th><th>now</th><th class="n">searches open</th><th class="n">limit</th><th>why the limit is there</th><th class="n">answer time</th><th class="n">tenders/min</th><th class="n" title="falls · chokes · raises">${RANGE}: <span class="mk down">▼</span> <span class="mk choke">◆</span> <span class="mk raise">▲</span></th></tr>`+
+ S.map(({s,st,x})=>`<tr class="pick" data-k="${esc(key(s))}"><td>${esc(title(s))}</td><td><span class="pill2 p-${st[0]}">${st[1]}</span></td><td class="n">${s.now.windows??"-"}</td><td class="n">${s.now.cap??"-"}</td>
+  <td class="why">${esc(why(s))}</td><td class="n ${x&&x.load&&x.load.s_per_req>=3?"warn":""}">${x&&x.load?x.load.s_per_req.toFixed(1)+" s":"-"}</td><td class="n">${x?fmt(Math.round(x.rate_10m)):"-"}</td>
+  <td class="n">${ev(s,"down").length} · ${ev(s,"choke").length} · ${ev(s,"raise").length}</td></tr>`).join("")}
+$("now").addEventListener("click",e=>{const r=e.target.closest("tr.pick");if(!r)return;PICK=r.dataset.k;store("pick",PICK);detail();$("detail").scrollIntoView({behavior:"smooth"})});
 
-function mult(s,i){
- const st0=s=>s.steps.length?L+(s.steps[0][0]-D.since)/(D.now-D.since)*(300-26-6):null;
- const W=300,H=118,L=26,R=6,T=6,B=16,pw=W-L-R,ph=H-T-B,t0=D.since,t1=D.now,ymax=Math.max(10,Math.ceil(Math.max(peak(s),...s.caps.map(c=>c[1]),s.now.cap||0)/10)*10);
- const X=t=>L+(t-t0)/(t1-t0)*pw,Y=v=>T+ph-v/ymax*ph;
- let g=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title(s))}: windows allowed over time">`;
- s.outages.forEach(o=>{const a=Math.max(t0,o[0]),b=Math.min(t1,o[1]);g+=`<rect x="${X(a).toFixed(1)}" y="${T}" width="${Math.max(1.5,X(b)-X(a)).toFixed(1)}" height="${ph}" fill="var(--bad)" opacity=".22"/>`});
- [0,ymax/2,ymax].forEach(v=>g+=`<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" ${v?'stroke-dasharray="2 3"':""}/><text x="${L-4}" y="${Y(v)+3}" text-anchor="end" class="ax">${v}</text>`);
- // ceiling (dashed step)
- if(s.caps.length||s.now.cap){const x0=s.start?L:st0(s);let c=s.caps.length?s.caps[0][1]:s.now.cap,d=`M${x0==null?L:x0},${Y(c)}`;s.caps.forEach(p=>{if(p[0]<t0)return;d+=`H${X(p[0]).toFixed(1)}V${Y(p[1]).toFixed(1)}`;c=p[1]});d+=`H${W-R}`;
-  g+=`<path d="${d}" fill="none" stroke="var(--dim)" stroke-width="1.2" stroke-dasharray="4 3"/>`}
- if(s.now.fell_at)g+=`<line x1="${L}" x2="${W-R}" y1="${Y(s.now.fell_at)}" y2="${Y(s.now.fell_at)}" stroke="var(--bad)" stroke-width="1" stroke-dasharray="1 3" opacity=".8"/>`;
- // windows allowed (step line)
- const st=s.steps;if(st.length||s.start){let d=s.start?`M${L},${Y(s.start.windows)}`:`M${X(st[0][0]).toFixed(1)},${Y(st[0][1]).toFixed(1)}`;st.forEach(p=>{d+=`H${X(p[0]).toFixed(1)}V${Y(p[1]).toFixed(1)}`});d+=`H${W-R}`;
-  g+=`<path d="${d}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>`}
- s.events.forEach(e=>{if(!["down","choke","raise"].includes(e[1]))return;const v=at(s,e[0]).w??0,c={down:"--bad",choke:"--warn",raise:"--ok"}[e[1]],y=e[1]==="raise"?Y(capAt(s,e[0])):Y(v);
-  g+=`<text x="${X(e[0]).toFixed(1)}" y="${(y+4).toFixed(1)}" text-anchor="middle" font-size="11" fill="var(${c})" stroke="var(--panel2)" stroke-width="2.5" paint-order="stroke">${{down:"▼",choke:"◆",raise:"▲"}[e[1]]}</text>`});
- g+=`<text x="${L}" y="${H-3}" class="ax">${tf(t0)}</text><text x="${W-R}" y="${H-3}" text-anchor="end" class="ax">now</text>`;
- g+=`<line class="xh" x1="0" x2="0" y1="${T}" y2="${T+ph}" stroke="var(--dim)" visibility="hidden"/><rect class="hit" x="${L}" y="${T}" width="${pw}" height="${ph}" fill="transparent"/></svg>`;
- const nw=s.now,dn=evCount(s,"down"),ch=evCount(s,"choke"),ra=evCount(s,"raise"),downMin=Math.round(s.outages.reduce((a,o)=>a+o[1]-o[0],0)/60);
- return `<div class="m" data-i="${i}"><h3>${esc(title(s))}<span>now ${nw.windows??"-"}×${nw.threads??"-"} · cap ${nw.cap??"-"}${nw.fell_at?` · fell at ${nw.fell_at}`:""}</span></h3>
-  <div class="chart">${g}</div><div class="ev"><span><span class="mk raise">▲</span>${ra}</span><span><span class="mk choke">◆</span>${ch}</span><span><span class="mk down">▼</span>${dn}</span>${downMin?`<span>${downMin} min down</span>`:""}<span>peak ${peak(s)} windows</span></div></div>`}
-function mults(){
- let S=D.sources.filter(s=>s.family==="gepnic");
- if(MFILT==="eventful")S=S.filter(s=>s.events.some(e=>["down","choke","raise"].includes(e[1]))||s.outages.length);
- const order={events:(a,b)=>b.events.length-a.events.length,peak:(a,b)=>peak(b)-peak(a),down:(a,b)=>b.outages.reduce((x,o)=>x+o[1]-o[0],0)-a.outages.reduce((x,o)=>x+o[1]-o[0],0),name:(a,b)=>title(a).localeCompare(title(b))};
- S.sort(order[MSORT]);MS=S;
- $("mults").innerHTML=S.length?S.map(mult).join(""):'<div class="dim">Nothing happened in this range.</div>'}
-let MS=[];
-$("mults").addEventListener("pointermove",ev=>{const card=ev.target.closest(".m");if(!card)return;const hit=ev.target.closest("rect.hit"),c=card.querySelector(".chart"),xh=c.querySelector(".xh");
- const tp=Hub.tip(c);if(!hit){tp.hide();xh.setAttribute("visibility","hidden");return}
- const s=MS[+card.dataset.i],svg=c.querySelector("svg"),r=svg.getBoundingClientRect(),W=300,L=26,R=6,sx=(ev.clientX-r.left)*W/r.width,t=D.since+(sx-L)/(W-L-R)*(D.now-D.since),v=at(s,t);
- xh.setAttribute("x1",sx);xh.setAttribute("x2",sx);xh.setAttribute("visibility","visible");
- const near=s.events.filter(e=>Math.abs(e[0]-t)<(D.now-D.since)/60).map(e=>e[2]);
- tp.show(ev.clientX-c.getBoundingClientRect().left,ev.clientY-c.getBoundingClientRect().top,tf(t),[{color:"var(--s1)",value:v.w??"-",label:"windows allowed"},{value:v.th??"-",label:"threads"},{value:capAt(s,t)??"-",label:"ceiling"}]
-  .concat(v.k?[KIND[v.k]+(v.sr!=null?` at ${v.sr} s a request`:"")]:[]).concat(downAt(s,t-60,t+60)?[{color:"var(--bad)",value:"down",label:"not answering"}]:[]).concat(near))});
-$("mults").addEventListener("pointerleave",()=>document.querySelectorAll("#mults .tip").forEach(t=>t.hidden=true));
+// ------------------------------------------------ one portal: three charts on one clock
+function axisX(g,L,pw,H,t0,t1){const n=6;for(let k=0;k<=n;k++){const t=t0+(t1-t0)*k/n;g.push(`<text x="${L+pw*k/n}" y="${H-4}" text-anchor="${k===0?"start":k===n?"end":"middle"}" class="ax">${k===n?"now":clock(t)}</text>`)}}
+function chartBox(el,draw){const W=Math.max(320,el.clientWidth||900);el.innerHTML=draw(W);return W}
+function detail(){
+ const G=D.sources.filter(s=>s.family==="gepnic");
+ if(!PICK||!G.some(s=>key(s)===PICK)){const busy=G.slice().sort((a,b)=>b.events.length-a.events.length)[0];PICK=busy?key(busy):""}
+ $("pick").innerHTML=G.slice().sort((a,b)=>title(a).localeCompare(title(b))).map(s=>`<option value="${esc(key(s))}" ${key(s)===PICK?"selected":""}>${esc(title(s))}</option>`).join("");
+ const s=G.find(x=>key(x)===PICK);if(!s)return;
+ const first=Math.min(...s.steps.map(p=>p[0]),...s.events.map(e=>e[0]),...s.outages.map(o=>o[0]),D.now-3600);
+ const t0=s.start?D.since:Math.max(D.since,first-(D.now-first)*.04),t1=D.now,L=44,R=86,downMin=Math.round(s.outages.reduce((a,o)=>a+Math.min(o[1],t1)-Math.max(o[0],t0),0)/60);
+ $("picksum").textContent=`${ev(s,"down").length} falls, ${ev(s,"choke").length} chokes, ${ev(s,"raise").length} raises, ${downMin} min down in the last ${RANGE}`;
+ // chart 1: searches allowed, limit, outages, labelled events
+ chartBox($("c1"),W=>{const H=230,T=10,B=18,pw=W-L-R,ph=H-T-B,ymax=Math.max(10,Math.ceil(Math.max(...s.steps.map(p=>p[1]),...s.caps.map(c=>c[1]),s.now.cap||0,s.now.fell_at||0)/10)*10);
+  const X=t=>L+(t-t0)/(t1-t0)*pw,Y=v=>T+ph-v/ymax*ph,g=[`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="searches allowed on ${esc(title(s))}">`];
+  s.outages.forEach(o=>{const a=Math.max(t0,o[0]),b=Math.min(t1,o[1]);g.push(`<rect x="${X(a)}" y="${T}" width="${Math.max(2,X(b)-X(a))}" height="${ph}" fill="var(--bad)" opacity=".18"><title>down ${clock(o[0])} to ${o[2]?"now":clock(o[1])} (${mins(o[1]-o[0])})</title></rect>`)});
+  for(let v=0;v<=ymax;v+=ymax/4)g.push(`<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" ${v?'stroke-dasharray="2 3"':""}/><text x="${L-6}" y="${Y(v)+3}" text-anchor="end" class="ax">${v}</text>`);
+  let c=s.caps.length?s.caps[0][1]:s.now.cap,d=`M${L},${Y(c)}`;s.caps.forEach(p=>{if(p[0]<t0)return;d+=`H${X(p[0])}V${Y(p[1])}`;c=p[1]});
+  const lab=[[Y(c),`limit ${c}`,"var(--dim)"]];
+  g.push(`<path d="${d}H${W-R}" fill="none" stroke="var(--dim)" stroke-width="1.5" stroke-dasharray="5 4"/>`);
+  if(s.now.fell_at){g.push(`<line x1="${L}" x2="${W-R}" y1="${Y(s.now.fell_at)}" y2="${Y(s.now.fell_at)}" stroke="var(--bad)" stroke-dasharray="1 3"/>`);lab.push([Y(s.now.fell_at),`fell at ${s.now.fell_at}`,"var(--bad)"])}
+  if(s.steps.length){let p0=s.steps[0],dd=s.start?`M${L},${Y(s.start.windows)}`:`M${X(p0[0])},${Y(p0[1])}`;s.steps.forEach(p=>{if(p[0]>=t0)dd+=`H${X(p[0])}V${Y(p[1])}`});
+   g.push(`<path d="${dd}H${W-R}" fill="none" stroke="var(--s1)" stroke-width="2.2" stroke-linejoin="round"/>`);lab.push([Y(s.now.windows||0),`now ${s.now.windows??"-"}`,"var(--s1)"])}
+  lab.sort((a,b)=>a[0]-b[0]);for(let i=1;i<lab.length;i++)if(lab[i][0]-lab[i-1][0]<12)lab[i][0]=lab[i-1][0]+12;
+  lab.forEach(([y,t,col])=>g.push(`<text x="${W-R+6}" y="${y+4}" class="ax" style="fill:${col};font-weight:600">${t}</text>`));
+  let lastLabelX=-1e9;
+  s.events.forEach(e=>{if(!["down","choke","raise"].includes(e[1]))return;const x=X(e[0]),v=e[1]==="raise"?capAt(s,e[0]):(nums(e[2])[0]||0),col={down:"--bad",choke:"--warn",raise:"--ok"}[e[1]];
+   g.push(`<text x="${x}" y="${Y(v)+4}" text-anchor="middle" font-size="12" fill="var(${col})" stroke="var(--panel)" stroke-width="3" paint-order="stroke">${{down:"▼",choke:"◆",raise:"▲"}[e[1]]}<title>${clock(e[0])}: ${esc(e[2])}</title></text>`);
+   if(e[1]!=="raise"&&x-lastLabelX>120){const n=nums(e[2]);g.push(`<text x="${x+6}" y="${Math.max(T+10,Y(v)-6)}" font-size="10" fill="var(${col})" stroke="var(--panel)" stroke-width="3" paint-order="stroke">${e[1]==="down"?"fell":"choked"} at ${n[0]} → ${n.slice(-1)[0]}</text>`);lastLabelX=x}});
+  axisX(g,L,pw,H,t0,t1);g.push("</svg>");return g.join("")});
+ // chart 2: answer time (seconds per request at each decision), target band
+ chartBox($("c2"),W=>{const H=130,T=8,B=18,pw=W-L-R,ph=H-T-B,pts=s.steps.filter(p=>p[4]!=null&&p[0]>=t0),ymax=12;
+  const X=t=>L+(t-t0)/(t1-t0)*pw,Y=v=>T+ph-Math.min(v,ymax)/ymax*ph,g=[`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="answer time on ${esc(title(s))}">`];
+  g.push(`<rect x="${L}" y="${Y(ymax)}" width="${pw}" height="${Y(6)-Y(ymax)}" fill="var(--bad)" opacity=".07"/><rect x="${L}" y="${Y(6)}" width="${pw}" height="${Y(3)-Y(6)}" fill="var(--warn)" opacity=".08"/>`);
+  [0,3,6,12].forEach(v=>g.push(`<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" ${v?'stroke-dasharray="2 3"':""}/><text x="${L-6}" y="${Y(v)+3}" text-anchor="end" class="ax">${v} s</text>`));
+  g.push(`<text x="${W-R+6}" y="${Y(3)+4}" class="ax">target 3 s</text><text x="${W-R+6}" y="${Y(6)+4}" class="ax" style="fill:var(--bad)">halve 6 s</text>`);
+  if(pts.length){let d="";pts.forEach((p,i)=>d+=(i?"L":"M")+X(p[0]).toFixed(1)+","+Y(p[4]).toFixed(1));g.push(`<path d="${d}" fill="none" stroke="var(--s2)" stroke-width="1.6"/>`);
+   pts.forEach(p=>{if(p[4]>=3)g.push(`<circle cx="${X(p[0])}" cy="${Y(p[4])}" r="${p[4]>ymax?3.5:2.5}" fill="var(${p[4]>=6?"--bad":"--warn"})"><title>${clock(p[0])}: ${p[4]} s a request</title></circle>`);
+    if(p[4]>ymax)g.push(`<text x="${X(p[0])+5}" y="${T+9}" font-size="9" fill="var(--bad)">${Math.round(p[4])} s</text>`)})}
+  else g.push(`<text x="${L+pw/2}" y="${T+ph/2}" text-anchor="middle" class="ax">no measurements in this range</text>`);
+  axisX(g,L,pw,H,t0,t1);g.push("</svg>");return g.join("")});
+ // chart 3: tenders saved per minute (from the throughput feed)
+ chartBox($("c3"),W=>{const H=130,T=8,B=18,pw=W-L-R,ph=H-T-B,proj=s.project,pts=(TP?TP.points:[]).filter(p=>p.project===proj),b=TP?TP.bucket:15;
+  const by=new Map(pts.map(p=>[p.t,p.records/b])),bs=b*60,ts=[];for(let t=Math.ceil(t0/bs)*bs;t<t1;t+=bs)ts.push(t);
+  const ymax=Hub.nice(Math.max(10,...ts.map(t=>by.get(t)||0))),X=t=>L+(t-t0)/(t1-t0)*pw,Y=v=>T+ph-v/ymax*ph,g=[`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="tenders saved per minute on ${esc(title(s))}">`];
+  [0,ymax/2,ymax].forEach(v=>g.push(`<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" ${v?'stroke-dasharray="2 3"':""}/><text x="${L-6}" y="${Y(v)+3}" text-anchor="end" class="ax">${Hub.compact(v)}</text>`));
+  const bw=Math.max(1,pw/ts.length-1);ts.forEach(t=>{const v=by.get(t)||0;if(v)g.push(`<rect x="${X(t)}" y="${Y(v)}" width="${bw}" height="${Y(0)-Y(v)}" fill="var(--s3)"><title>${clock(t)}: ${fmt(Math.round(v))} a minute</title></rect>`)});
+  const x=live(s);g.push(`<text x="${W-R+6}" y="${T+10}" class="ax">${x?fmt(Math.round(x.rate_10m))+"/min now":""}</text>`);
+  axisX(g,L,pw,H,t0,t1);g.push("</svg>");return g.join("")})}
+$("pick").onchange=e=>{PICK=e.target.value;store("pick",PICK);detail()};
 
+// ------------------------------------------------ what happened, in sentences
+function feed(){
+ const out=[];
+ D.sources.filter(s=>s.family==="gepnic").forEach(s=>{const nm=title(s);
+  s.outages.forEach(o=>out.push({t:o[0],k:"down",html:`<b>${esc(nm)}</b> stopped answering${o[2]?" and is still down":` for ${mins(o[1]-o[0])}`}. Its runners held until it answered twice in a row, then restarted from 1 search.`}));
+  let run=null;
+  s.events.forEach(e=>{const n=nums(e[2]);
+   if(e[1]==="raise"){if(run&&e[0]-run.t1<1500){run.t1=e[0];run.to=n.slice(-1)[0];run.steps++;return}
+    run={t:e[0],t1:e[0],from:n[n.length-2],to:n.slice(-1)[0],steps:1,s,raise:true};out.push(run);return}
+   run=null;
+   if(e[1]==="down")out.push({t:e[0],k:"down",html:`<b>${esc(nm)}</b> went down while we had <b>${n[0]}</b> searches open, so its limit was cut from ${n[1]} to <b>${n[2]}</b>.`});
+   if(e[1]==="choke")out.push({t:e[0],k:"choke",html:`<b>${esc(nm)}</b> slowed badly with <b>${n[0]}</b> searches open (${esc((e[2].match(/\(([^)]*)\)/)||[,""])[1].replace(/: halve$/,""))}), so its limit was cut to <b>${n.slice(-1)[0]}</b>.`})})});
+ out.forEach(o=>{if(o.raise){o.html=`<b>${esc(title(o.s))}</b> was fast at its limit, so it earned more: limit ${o.from} → <b>${o.to}</b>${o.steps>1?` in ${o.steps} steps over ${mins(o.t1-o.t)}`:""}.`;o.k="raise"}});
+ const L=out.filter(o=>FEEDF==="all"||o.k!=="raise").sort((a,b)=>b.t-a.t).slice(0,60);
+ $("feed").innerHTML=L.length?L.map(o=>`<li><time>${clock(o.t)}</time><span class="mk ${o.k}">${{down:"▼",choke:"◆",raise:"▲"}[o.k]}</span><span>${o.html}</span></li>`).join(""):'<li><span></span><span></span><span class="dim">Nothing happened in this range.</span></li>'}
 
-// ---------------------------------------------------------------- the dial
-const GAP=0.24;      // radians left open at the top for the labels
-function dial(){
- const S0=D.sources.filter(s=>s.family==="gepnic"&&(s.steps.length||s.events.length||s.outages.length)).sort((a,b)=>peak(a)-peak(b));
- const el=$("dial"),Z=640,c=Z/2,r0=86,r1=Z/2-48,n=S0.length,rw=(r1-r0)/Math.max(1,n),t0=D.since,t1=D.now;
- const slice=RANGES[RANGE]<=6?120:RANGES[RANGE]<=24?600:1800,m=Math.ceil((t1-t0)/slice);
- const ang=t=>-Math.PI/2+GAP/2+(t-t0)/(t1-t0)*(2*Math.PI-GAP),pt=(r,a)=>[c+r*Math.cos(a),c+r*Math.sin(a)];
- const arc=(ra,rb,a0,a1)=>{const [x0,y0]=pt(rb,a0),[x1,y1]=pt(rb,a1),[x2,y2]=pt(ra,a1),[x3,y3]=pt(ra,a0),lg=a1-a0>Math.PI?1:0;
-  return `M${x0.toFixed(1)},${y0.toFixed(1)}A${rb},${rb} 0 ${lg} 1 ${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}A${ra},${ra} 0 ${lg} 0 ${x3.toFixed(1)},${y3.toFixed(1)}Z`};
- const ramp=["--q1","--q2","--q3","--q4","--q5","--q6"],col=w=>w==null||w<=0?"var(--bar)":`var(${ramp[Math.min(5,Math.floor(Math.sqrt(Math.min(40,w)/40)*6))]})`;
- let g=`<svg viewBox="0 0 ${Z} ${Z}" role="img" aria-label="windows allowed per portal around a ${RANGE} clock">`;
- // hour ticks
- const step=RANGES[RANGE]<=6?3600:RANGES[RANGE]<=24?3*3600:12*3600;
- for(let t=Math.ceil(t0/step)*step;t<t1;t+=step){if(t-t0<(t1-t0)*.04||t1-t<(t1-t0)*.04)continue;const a=ang(t),[x,y]=pt(r1+6,a),[x2,y2]=pt(r1+20,a),[xl,yl]=pt(r1+27,a);
-  g+=`<line x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--dim)"/><text x="${xl.toFixed(1)}" y="${(yl+3).toFixed(1)}" text-anchor="middle" class="ax">${new Date(t*1000).toLocaleTimeString([],{hour:"2-digit"})}</text>`}
- S0.forEach((s,ri)=>{const ra=r0+ri*rw+.4,rb=r0+(ri+1)*rw-.4;
-  for(let i=0;i<m;i++){const a=t0+i*slice,b=Math.min(t1,a+slice),v=at(s,b);if(v.w==null&&!downAt(s,a,b))continue;
-   g+=`<path d="${arc(ra,rb,ang(a),ang(b)+.002)}" fill="${downAt(s,a,b)?"var(--bad)":col(v.w)}"/>`}
-  s.events.forEach(e=>{if(!["down","choke","raise"].includes(e[1]))return;const [x,y]=pt((ra+rb)/2,ang(e[0]));
-   g+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${Math.max(1.6,rw*.42).toFixed(1)}" fill="var(${{down:"--bad",choke:"--warn",raise:"--ok"}[e[1]]})" stroke="var(--panel)" stroke-width="1"/>`})});
- const [nx,ny]=pt(r0-6,ang(t1)),[ox,oy]=pt(r1+4,ang(t1)),[sx,sy]=pt(r0-6,ang(t0)),[qx,qy]=pt(r1+4,ang(t0));
- g+=`<line x1="${nx}" y1="${ny}" x2="${ox}" y2="${oy}" stroke="var(--text)" stroke-width="1.5"/><text x="${ox-6}" y="${oy-6}" text-anchor="end" class="ax" style="fill:var(--text);font-weight:700">now</text>`;
- g+=`<line x1="${sx}" y1="${sy}" x2="${qx}" y2="${qy}" stroke="var(--dim)" stroke-dasharray="2 2"/><text x="${qx+6}" y="${qy-6}" class="ax">${RANGE} ago</text>`;
- g+=`<circle id="dialhit" cx="${c}" cy="${c}" r="${r1}" fill="transparent"/><path id="dialcur" fill="none" stroke="var(--text)" stroke-width="1.5" d=""/></svg>`;
- const tot=S0.reduce((a,s)=>a+(s.now.windows||0),0),down=S0.filter(s=>s.outages.some(o=>o[2])).length;
- const centre=`<div><b>${fmt(tot)}</b><span>windows in flight now across ${n} portals${down?` · ${down} down`:""}</span></div>`;
- el.innerHTML=g+`<div class="ctr" id="dialctr">${centre}</div>`;
- const svg=el.querySelector("svg"),cur=$("dialcur");
- svg.addEventListener("pointermove",ev=>{const r=svg.getBoundingClientRect(),x=(ev.clientX-r.left)*Z/r.width-c,y=(ev.clientY-r.top)*Z/r.height-c,d=Math.hypot(x,y);
-  let a=Math.atan2(y,x);if(a<-Math.PI/2+GAP/2)a+=2*Math.PI;const f=(a+Math.PI/2-GAP/2)/(2*Math.PI-GAP),ri=Math.floor((d-r0)/rw);
-  if(d<r0||d>r1||f<0||f>1||ri<0||ri>=n){cur.setAttribute("d","");$("dialctr").innerHTML=centre;return}
-  const s=S0[ri],t=t0+f*(t1-t0),v=at(s,t),dn=downAt(s,t-60,t+60),ra=r0+ri*rw,rb=ra+rw;
-  cur.setAttribute("d",arc(ra,rb,ang(Math.max(t0,t-slice/2)),ang(Math.min(t1,t+slice/2))));
-  $("dialctr").innerHTML=`<div><b class="${dn?"bad":""}">${dn?"down":v.w==null?"not started":v.w+" window"+(v.w===1?"":"s")}</b><span>${esc(title(s))}<br>${tf(t)}${v.th?` · ${v.th} threads`:""} · cap ${capAt(s,t)??"-"}</span></div>`});
- svg.addEventListener("pointerleave",()=>{cur.setAttribute("d","");$("dialctr").innerHTML=centre})}
+// ------------------------------------------------ cost
+function cost(){
+ const rows=D.sources.filter(s=>s.family==="gepnic").map(s=>{const x=live(s),w=s.now.windows||0,c=s.now.cap||0,rate=x?x.rate_10m:0,r60=x?x.rate_60m:0;
+  const per=w?rate/w:0,lim=per*Math.max(w,c),down=s.outages.reduce((a,o)=>a+Math.min(o[1],D.now)-Math.max(o[0],D.since),0)/60;
+  return {s,rate,at:x&&["parked","done"].includes(x.status)?rate:Math.max(rate,lim),lostDown:down*r60,down}}).filter(r=>r.rate>0||r.at>0||r.lostDown>0);
+ const now=rows.reduce((a,r)=>a+r.rate,0),pot=rows.reduce((a,r)=>a+r.at,0),lost=rows.reduce((a,r)=>a+r.lostDown,0);
+ $("costbig").innerHTML=`<div><b>${fmt(Math.round(now))}</b><span>tenders a minute now</span></div><div><b>+${fmt(Math.round(pot-now))}</b><span>a minute if every portal ran at its limit (estimate)</span></div>
+  <div><b>${fmt(Math.round(lost))}</b><span>tenders not saved because portals were down (last ${RANGE}, estimate)</span></div>`;
+ rows.sort((a,b)=>(b.at-b.rate)-(a.at-a.rate));const mx=Math.max(1,...rows.map(r=>r.at));
+ $("costbars").innerHTML=rows.slice(0,16).map(r=>`<div class="lr" title="${esc(title(r.s))}: ${fmt(Math.round(r.rate))}/min now with ${r.s.now.windows??0} searches; about ${fmt(Math.round(r.at))}/min at its limit of ${r.s.now.cap??"-"}"><span class="nm">${esc(title(r.s))}</span>
+  <span class="track"><i style="width:${r.at/mx*100}%;background:var(--q2)"></i><i style="width:${r.rate/mx*100}%;background:var(--s1)"></i></span><span class="n">${fmt(Math.round(r.rate))} <span class="dim">of ~${fmt(Math.round(r.at))}/min</span></span></div>`).join("")+
+  `<div class="lg"><span><i style="background:var(--s1)"></i>now</span><span><i style="background:var(--q2)"></i>at its limit (estimate)</span></div>`}
 
-// ---------------------------------------------------------------- replay
-let RT=null,PLAY=null,SPEED=+load("speed","60");
-const RACE_N=18,ROW=21;
-function replaySetup(){
- const S0=D.sources.filter(s=>s.family==="gepnic"&&s.steps.length).sort((a,b)=>peak(b)-peak(a)).slice(0,RACE_N);
- $("race").style.height=(S0.length*ROW)+"px";
- $("race").innerHTML=S0.map((s,i)=>`<div class="r" data-i="${i}" style="top:${i*ROW}px"><span class="nm">${esc(title(s))}</span><span class="tr"><i></i><em></em></span><span class="v"></span></div>`).join("");
- RT={S:S0,ev:D.sources.flatMap(s=>s.events.filter(e=>["down","choke","raise"].includes(e[1])).map(e=>({t:e[0],k:e[1],s,txt:e[2]}))).sort((a,b)=>a.t-b.t)};
- // fleet total windows over time, for the line under the clock
- const n=160,t0=D.since,t1=D.now,ts=Array.from({length:n},(_,i)=>t0+(t1-t0)*i/(n-1)),G=D.sources.filter(s=>s.family==="gepnic");
- RT.line={ts,vals:ts.map(t=>G.reduce((a,s)=>a+(at(s,t).w||0),0)),down:ts.map(t=>G.filter(s=>downAt(s,t-60,t+60)).length)};
- const W=600,H=64,mx=Math.max(1,...RT.line.vals);let d="";RT.line.vals.forEach((v,i)=>d+=(i?"L":"M")+(i/(n-1)*W).toFixed(1)+","+(H-4-v/mx*(H-10)).toFixed(1));
- $("fleetline").innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:64px" aria-label="windows in flight across the fleet">${RT.line.down.map((k,i)=>k?`<rect x="${(i/(n-1)*W-2).toFixed(1)}" y="${H-4-Math.min(k,6)*3}" width="3" height="${Math.min(k,6)*3}" fill="var(--bad)" opacity=".7"/>`:"").join("")}<path d="${d}" fill="none" stroke="var(--s1)" stroke-width="1.6" vector-effect="non-scaling-stroke"/><line id="playhead" x1="${W}" x2="${W}" y1="0" y2="${H}" stroke="var(--text)" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
- $("fleetline").onclick=ev=>{const r=ev.currentTarget.getBoundingClientRect();$("scrub").value=Math.round((ev.clientX-r.left)/r.width*1000);frame()};
- frame()}
-function frame(){
- if(!RT)return;const f=+$("scrub").value/1000,t=D.since+f*(D.now-D.since),win=(D.now-D.since)/80;
- $("clock").innerHTML=`${tf(t)}<small>${f>=.999?"now":Math.round((D.now-t)/60)>=90?((D.now-t)/3600).toFixed(1)+" h ago":Math.round((D.now-t)/60)+" min ago"}</small>`;
- $("playhead")?.setAttribute("x1",f*600);$("playhead")?.setAttribute("x2",f*600);
- const vals=RT.S.map(s=>({s,v:at(s,t),cap:capAt(s,t),dn:downAt(s,t-60,t+60),ev:RT.ev.filter(e=>e.s===s&&e.t<=t&&e.t>t-win).pop()}));
- const order=vals.slice().sort((a,b)=>(b.v.w||0)-(a.v.w||0));
- $("race").querySelectorAll(".r").forEach(row=>{const x=vals[+row.dataset.i],rank=order.indexOf(x);row.style.top=(rank*ROW)+"px";
-  const bar=row.querySelector("i"),tick=row.querySelector("em");bar.style.width=Math.min(100,(x.v.w||0)/40*100)+"%";bar.className=x.dn?"down":"";
-  tick.style.left=Math.min(99.5,(x.cap||0)/40*100)+"%";row.querySelector(".v").textContent=x.dn?"down":x.v.w!=null?`${x.v.w}×${x.v.th}`:"-";
-  row.className="r"+(x.ev?" flash-"+x.ev.k:"")});
- const recent=RT.ev.filter(e=>e.t<=t).slice(-7).reverse();
- $("ticker").innerHTML=recent.map(e=>`<li><time>${tf(e.t)}</time><span><span class="mk ${e.k}">${{down:"▼",choke:"◆",raise:"▲"}[e.k]}</span> <b>${esc(title(e.s))}</b> ${esc(e.txt.replace(/^gepnic:\S+ /,""))}</span></li>`).join("")||'<li class="dim">No falls, chokes or raises yet at this point.</li>'}
-function play(){
- if(PLAY){cancelAnimationFrame(PLAY);PLAY=null;$("play").textContent="▶ Play";return}
- if(+$("scrub").value>=1000)$("scrub").value=0;$("play").textContent="❚❚ Pause";let last=performance.now();
- const run=now=>{const dt=(now-last)/1000;last=now;const v=Math.min(1000,+$("scrub").value+dt*1000/SPEED);$("scrub").value=v;frame();
-  if(v>=1000){PLAY=null;$("play").textContent="▶ Play";return}PLAY=requestAnimationFrame(run)};PLAY=requestAnimationFrame(run)}
-$("play").onclick=play;$("scrub").oninput=frame;
-async function tick(){try{[D,SC]=await Promise.all([j("/api/throttle?hours="+RANGES[RANGE]),j("/api/scrapes")]);stats();dial();heat();mults();if(!PLAY){const keep=RT?$("scrub").value:1000;replaySetup();$("scrub").value=keep;frame()}$("updated").textContent="updated "+new Date().toLocaleTimeString()}
+async function tick(){
+ try{[D,SC,TP]=await Promise.all([j("/api/throttle?hours="+RANGES[RANGE]),j("/api/scrapes"),j("/api/throughput?minutes="+Math.min(1440,RANGES[RANGE]*60)+"&bucket="+(RANGES[RANGE]<=6?5:15))]);
+  nowTable();detail();feed();cost();$("updated").textContent="updated "+new Date().toLocaleTimeString()}
  catch(e){if(e!==0)$("updated").textContent="update failed, retrying"}}
 seg($("range"),Object.keys(RANGES).map(k=>[k,k]),RANGE,"range",k=>{RANGE=k;tick()});
-seg($("hsort"),[["peak","Most windows"],["events","Most events"],["down","Most downtime"],["name","Name"]],HSORT,"hsort",k=>{HSORT=k;if(D)heat()});
-seg($("msort"),[["events","Most events"],["peak","Most windows"],["down","Most downtime"],["name","Name"]],MSORT,"msort",k=>{MSORT=k;if(D)mults()});
-seg($("speed"),[["120","slow"],["60","normal"],["20","fast"]],String(SPEED),"speed",k=>{SPEED=+k});
-seg($("mfilt"),[["eventful","With events"],["all","All portals"]],MFILT,"mfilt",k=>{MFILT=k;if(D)mults()});
-let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D)heat()},150)});
+seg($("feedf"),[["incidents","Falls and chokes"],["all","Everything"]],FEEDF,"feedf",k=>{FEEDF=k;if(D)feed()});
+let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D)detail()},150)});
 tick();setInterval(tick,60000);
 </script></body></html>
