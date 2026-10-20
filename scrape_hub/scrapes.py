@@ -168,8 +168,8 @@ def build(c):
             status = "done"
         elif down:
             status = "down"
-        elif main["archived"] and not rate:
-            status = "done" if w.get("done") else "idle"
+        elif main["archived"] and not rate and not open_w and not w.get("failed"):
+            status = "done" if w.get("done") else "idle"     # archived only hides a project; the queue decides whether it is done
         elif rate > 0 or any(st["runners"] for st in s["stages"].values()):
             ld = main["load"]
             status = "slow" if (ld and ld["s_per_req"] >= 3) or (pr and pr["ms"] and pr["ms"] >= 3000) else "running"
