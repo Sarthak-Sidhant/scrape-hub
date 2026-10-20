@@ -846,7 +846,7 @@ def need_login(request: Request):
         raise HTTPException(401, "login required")
 
 
-NAV = [("/", "Overview"), ("/portals", "Portals"), ("/data", "Data"), ("/runs", "Runs"), ("/explore", "Rate explorer"), ("/tender", "Tender lookup")]
+NAV = [("/", "Overview"), ("/portals", "Portals"), ("/throttle", "Throttle"), ("/data", "Data"), ("/runs", "Runs"), ("/explore", "Rate explorer"), ("/tender", "Tender lookup")]
 
 
 def page(name: str, current: str = "") -> str:
@@ -936,6 +936,20 @@ def traffic_api(minutes: int = 0):
     with db.conn() as c:
         data = scrapes.traffic_range(c, minutes) if minutes else scrapes.traffic(c)
     return JSONResponse(json.loads(json.dumps(data, default=_iso)))
+
+
+@app.get("/api/throttle", dependencies=[Depends(need_login)])
+def throttle_api(hours: int = 24):
+    """The throttle's decisions per source over the last `hours`: windows and threads after each decision, cap changes, outages."""
+    with db.conn() as c:
+        return JSONResponse(json.loads(json.dumps(scrapes.throttle_history(c, hours), default=_iso)))
+
+
+@app.get("/throttle", response_class=HTMLResponse)
+def throttle_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", 303)
+    return page("throttle.html", "/throttle")
 
 
 @app.get("/api/adjustments", dependencies=[Depends(need_login)])

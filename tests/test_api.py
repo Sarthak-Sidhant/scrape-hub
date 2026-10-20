@@ -1015,3 +1015,20 @@ def test_a_portal_is_not_raised_back_to_where_it_fell(client, clean):
     assert st["adaptive"]["max_windows"] == 28                     # roof is 30 - 2 = 28: no raise
     st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "healthy_min": 9}}, 200, 100, 1)
     assert st["adaptive"]["max_windows"] == 26
+
+
+def test_throttle_history_gives_steps_caps_and_events(client, clean, login):
+    from scrape_hub import scrapes
+    scrapes._thist.clear()
+    start(client, project="gepnic-hist")
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"threads": 8, "max_claimed": 12, "adaptive": {"max_windows": 24, "fell_at": 20}}' WHERE name='gepnic-hist'""")
+        c.execute("""INSERT INTO adjustments (project, threads_from, threads_to, claimed_from, claimed_to, reason) VALUES
+                     ('gepnic-hist', 4, 6, 6, 10, 'peak: 0.5 s per request, well under 3.0 s: more'),
+                     ('gepnic-hist', 6, 6, 10, 10, 'choked at 10 windows (7.0 s per request: halve): window cap 32 -> 24')""")
+    d = client.get("/api/throttle?hours=6").json()
+    s = next(x for x in d["sources"] if x["source"] == "hist")
+    assert [p[1] for p in s["steps"]] == [10] and s["steps"][0][3] == "more"
+    assert [c[1] for c in s["caps"]] == [32, 24] and s["events"][0][1] == "choke"
+    assert s["now"] == {"threads": 8, "windows": 12, "cap": 24, "fell_at": 20}
+    assert client.get("/throttle").status_code == 200

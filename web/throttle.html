@@ -1,0 +1,129 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Scrape hub: throttle</title><link rel="stylesheet" href="/assets/hub.css"><style>
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-top:10px}
+.stats div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel2)}.stats b{display:block;font-size:20px;line-height:1.2}.stats span{font-size:11px;color:var(--dim)}
+.mk{display:inline-block;width:14px;text-align:center;font-weight:700}.mk.down{color:var(--bad)}.mk.choke{color:var(--warn)}.mk.raise{color:var(--ok)}.mk.halve{color:var(--s2)}
+.heat{position:relative;overflow-x:auto}.heat svg{min-width:720px}
+.mults{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr));gap:12px}
+.m{border:1px solid var(--line);border-radius:10px;padding:9px 11px 6px;background:var(--panel2);position:relative;min-width:0}
+.m h3{font-size:12px;margin:0;display:flex;justify-content:space-between;gap:8px}.m h3 span{font-weight:400;color:var(--dim);white-space:nowrap}
+.m .ev{font-size:11px;color:var(--dim);margin-top:2px;display:flex;gap:10px;flex-wrap:wrap}
+.m svg{margin-top:4px}
+.ctrl{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:4px 0 12px}.ctrl .lab{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
+.lgx{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;margin-top:8px;align-items:center}.lgx i{display:inline-block;width:14px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px}
+.ramp{display:inline-flex;gap:1px;vertical-align:middle}.ramp i{width:16px;height:10px;margin:0;border-radius:1px}
+</style></head><body>
+<header><h1>THROTTLE</h1><!--NAV--><span class="sp"></span><span class="dim" id="updated">loading</span></header>
+<main>
+<section><div class="head"><div><h2>How the throttle drove every portal</h2>
+<p class="lede">Every minute the hub looks at how each portal answered our runners and sets two dials: <b>windows</b> (searches in flight, the load that knocks a portal over) and <b>threads</b> per process. It climbs while answers are fast, eases off when they slow, halves when they are bad, holds everything when the portal stops answering, and learns a lower ceiling where a portal choked or fell. This page draws every one of those decisions.</p></div>
+<div class="seg" id="range" role="group" aria-label="time range"></div></div>
+<div class="stats" id="stats"></div></section>
+
+<section><div class="head"><div><h2>The fleet at a glance</h2>
+<p class="lede">One row per portal, one column per time slice. The brighter the cell, the more windows the throttle allowed; red is the portal not answering; a mark on a cell is a decision worth knowing about. Hover for the details.</p></div>
+<div class="seg" id="hsort" role="group" aria-label="sort rows"></div></div>
+<div class="heat chart" id="heat"></div>
+<div class="lgx"><span>windows allowed</span><span class="ramp"><i style="background:var(--q1)"></i><i style="background:var(--q2)"></i><i style="background:var(--q3)"></i><i style="background:var(--q4)"></i><i style="background:var(--q5)"></i><i style="background:var(--q6)"></i></span><span class="dim">1 → 40</span>
+<span><i style="background:var(--bad)"></i>not answering</span><span><span class="mk down">▼</span>went down (cap cut to 70%)</span><span><span class="mk choke">◆</span>choked (cap cut to 80%)</span><span><span class="mk raise">▲</span>earned +2 windows</span></div></section>
+
+<section><div class="head"><div><h2>Portal by portal</h2>
+<p class="lede">The step line is the windows the throttle allowed, the dashed line the ceiling it may climb to, red bands the portal's outages. A portal that keeps hitting its ceiling and staying fast earns a higher one; one that chokes or falls gets a lower one and remembers the level.</p></div></div>
+<div class="ctrl"><span class="lab">Sort</span><div class="seg" id="msort" role="group" aria-label="sort portals"></div><span class="lab">Show</span><div class="seg" id="mfilt" role="group" aria-label="filter portals"></div></div>
+<div class="mults" id="mults"></div></section>
+</main>
+<script src="/assets/charts.js"></script>
+<script>
+const {esc,fmt,ago,j}=Hub;const $=id=>document.getElementById(id);
+const store=(k,v)=>{try{localStorage.setItem("thr."+k,v)}catch(e){}},load=(k,d)=>{try{return localStorage.getItem("thr."+k)??d}catch(e){return d}};
+const RANGES={"6h":6,"24h":24,"3d":72};let RANGE=load("range","24h"),HSORT=load("hsort","peak"),MSORT=load("msort","events"),MFILT=load("mfilt","eventful"),D=null,SC=null;
+const tf=t=>{const d=new Date(t*1000);return (RANGES[RANGE]>24?d.toLocaleDateString([],{day:"numeric",month:"short"})+" ":"")+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})};
+const KIND={more:"climbed",ease:"eased off",halve:"halved",hold:"held: portal down",down:"went down",choke:"choked",raise:"earned a higher cap",restore:"cap restored",other:"changed"};
+function seg(el,items,cur,key,cb){el.innerHTML=items.map(([k,l])=>`<button data-k="${k}" aria-pressed="${k===cur}">${l}</button>`).join("");
+ el.onclick=e=>{const b=e.target.closest("[data-k]");if(!b)return;el.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x===b));store(key,b.dataset.k);cb(b.dataset.k)}}
+function title(s){const x=SC&&SC.sources.find(y=>y.family===s.family&&y.source===s.source);return x?x.title:s.source}
+// windows and threads in force at time t: the last decision at or before t
+function at(s,t){let w=s.start?s.start.windows:null,th=s.start?s.start.threads:null,k=null,sr=null;   // nothing known before the first decision
+ for(const p of s.steps){if(p[0]>t)break;w=p[1];th=p[2];k=p[3];sr=p[4]}
+ return {w,th,k,sr}}
+function capAt(s,t){let c=s.caps.length?s.caps[0][1]:s.now.cap;for(const p of s.caps){if(p[0]>t)break;c=p[1]}return c}
+const downAt=(s,a,b)=>s.outages.some(o=>o[0]<b&&o[1]>a);
+const peak=s=>Math.max(0,...s.steps.map(p=>p[1]||0));
+const evCount=(s,k)=>s.events.filter(e=>e[1]===k).length;
+
+function stats(){
+ const all=D.sources,steps=all.flatMap(s=>s.steps),ev=all.flatMap(s=>s.events),n=k=>ev.filter(e=>e[1]===k).length+steps.filter(p=>p[3]===k&&!["halve","hold"].includes(k)).length;
+ const downMin=all.reduce((a,s)=>a+s.outages.reduce((b,o)=>b+(o[1]-o[0])/60,0),0);
+ $("stats").innerHTML=[[fmt(steps.length+ev.filter(e=>["down","choke","raise","restore"].includes(e[1])).length),"decisions"],[fmt(steps.filter(p=>p[3]==="more").length),"climbs"],
+  [fmt(steps.filter(p=>p[3]==="ease").length),"eased off"],[fmt(evCount({events:ev},"halve")),"halved"],[`<span class="mk raise">▲</span>${evCount({events:ev},"raise")}`,"higher caps earned"],
+  [`<span class="mk choke">◆</span>${evCount({events:ev},"choke")}`,"chokes learned"],[`<span class="mk down">▼</span>${evCount({events:ev},"down")}`,"portals went down"],
+  [Math.round(downMin/60)+" h","portal downtime in all"]].map(([b,l])=>`<div><b>${b}</b><span>${l}</span></div>`).join("")}
+
+function heat(){
+ const S=D.sources.filter(s=>s.family==="gepnic"&&(s.steps.length||s.events.length||s.outages.length));
+ const order={peak:(a,b)=>peak(b)-peak(a),events:(a,b)=>b.events.length-a.events.length,down:(a,b)=>b.outages.reduce((x,o)=>x+o[1]-o[0],0)-a.outages.reduce((x,o)=>x+o[1]-o[0],0),name:(a,b)=>title(a).localeCompare(title(b))};
+ S.sort(order[HSORT]);
+ const el=$("heat"),W=Math.max(720,el.clientWidth),L=150,R=8,T=22,rh=Math.max(11,Math.min(16,Math.floor(560/Math.max(1,S.length)))),H=T+S.length*rh+22;
+ const t0=D.since,t1=D.now,slice=RANGES[RANGE]<=6?120:RANGES[RANGE]<=24?600:1800,n=Math.ceil((t1-t0)/slice),cw=(W-L-R)/n;
+ const ramp=["--q1","--q2","--q3","--q4","--q5","--q6"],col=w=>w==null||w<=0?"var(--bar)":`var(${ramp[Math.min(5,Math.floor(Math.sqrt(Math.min(40,w)/40)*6))]})`;
+ let g=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="windows allowed per portal over time">`;
+ const ticks=6;for(let k=0;k<=ticks;k++){const t=t0+(t1-t0)*k/ticks,x=L+(W-L-R)*k/ticks;g+=`<text x="${x}" y="12" text-anchor="${k===0?"start":k===ticks?"end":"middle"}" class="ax">${k===ticks?"now":tf(t)}</text>`}
+ S.forEach((s,ri)=>{const y=T+ri*rh;g+=`<text x="${L-8}" y="${y+rh/2+3.5}" text-anchor="end" class="ax" style="fill:var(--text)">${esc(title(s).slice(0,20))}</text>`;
+  for(let i=0;i<n;i++){const a=t0+i*slice,b=a+slice,v=at(s,b),dn=downAt(s,a,b);
+   g+=`<rect data-r="${ri}" data-i="${i}" x="${(L+i*cw).toFixed(1)}" y="${y+1}" width="${Math.max(.5,cw-.6).toFixed(1)}" height="${rh-2}" fill="${dn?"var(--bad)":col(v.w)}"/>`}
+  s.events.forEach(e=>{if(!["down","choke","raise"].includes(e[1]))return;const x=L+(e[0]-t0)/(t1-t0)*(W-L-R),c={down:"--bad",choke:"--warn",raise:"--ok"}[e[1]];
+   g+=`<text x="${x.toFixed(1)}" y="${y+rh-3}" text-anchor="middle" font-size="${rh-3}" fill="var(${c})" stroke="var(--panel)" stroke-width="2" paint-order="stroke" pointer-events="none">${{down:"▼",choke:"◆",raise:"▲"}[e[1]]}</text>`})});
+ el.innerHTML=g+`<rect class="hit" x="0" y="0" width="0" height="0"/></svg>`;
+ const svg=el.querySelector("svg"),tp=Hub.tip(el);
+ svg.addEventListener("pointermove",ev=>{const r=ev.target.closest("rect[data-r]");if(!r)return tp.hide();const s=S[+r.dataset.r],i=+r.dataset.i,a=t0+i*slice,b=a+slice,v=at(s,b);
+  const evs=s.events.filter(e=>e[0]>=a&&e[0]<b),rect=svg.getBoundingClientRect();
+  tp.show(ev.clientX-rect.left,ev.clientY-rect.top,`${title(s)} · ${tf(a)}–${tf(b)}`,[{value:v.w??"-",label:"windows allowed"},{value:v.th??"-",label:"threads per process"},{value:capAt(s,b)??"-",label:"ceiling"}]
+   .concat(v.sr!=null?[{value:v.sr+" s",label:"per request then"}]:[]).concat(downAt(s,a,b)?[{color:"var(--bad)",value:"down",label:"portal not answering"}]:[]).concat(evs.map(e=>e[2])))});
+ svg.addEventListener("pointerleave",()=>tp.hide())}
+
+function mult(s,i){
+ const st0=s=>s.steps.length?L+(s.steps[0][0]-D.since)/(D.now-D.since)*(300-26-6):null;
+ const W=300,H=118,L=26,R=6,T=6,B=16,pw=W-L-R,ph=H-T-B,t0=D.since,t1=D.now,ymax=Math.max(10,Math.ceil(Math.max(peak(s),...s.caps.map(c=>c[1]),s.now.cap||0)/10)*10);
+ const X=t=>L+(t-t0)/(t1-t0)*pw,Y=v=>T+ph-v/ymax*ph;
+ let g=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(title(s))}: windows allowed over time">`;
+ s.outages.forEach(o=>{const a=Math.max(t0,o[0]),b=Math.min(t1,o[1]);g+=`<rect x="${X(a).toFixed(1)}" y="${T}" width="${Math.max(1.5,X(b)-X(a)).toFixed(1)}" height="${ph}" fill="var(--bad)" opacity=".22"/>`});
+ [0,ymax/2,ymax].forEach(v=>g+=`<line x1="${L}" x2="${W-R}" y1="${Y(v)}" y2="${Y(v)}" stroke="var(--line)" ${v?'stroke-dasharray="2 3"':""}/><text x="${L-4}" y="${Y(v)+3}" text-anchor="end" class="ax">${v}</text>`);
+ // ceiling (dashed step)
+ if(s.caps.length||s.now.cap){const x0=s.start?L:st0(s);let c=s.caps.length?s.caps[0][1]:s.now.cap,d=`M${x0==null?L:x0},${Y(c)}`;s.caps.forEach(p=>{if(p[0]<t0)return;d+=`H${X(p[0]).toFixed(1)}V${Y(p[1]).toFixed(1)}`;c=p[1]});d+=`H${W-R}`;
+  g+=`<path d="${d}" fill="none" stroke="var(--dim)" stroke-width="1.2" stroke-dasharray="4 3"/>`}
+ if(s.now.fell_at)g+=`<line x1="${L}" x2="${W-R}" y1="${Y(s.now.fell_at)}" y2="${Y(s.now.fell_at)}" stroke="var(--bad)" stroke-width="1" stroke-dasharray="1 3" opacity=".8"/>`;
+ // windows allowed (step line)
+ const st=s.steps;if(st.length||s.start){let d=s.start?`M${L},${Y(s.start.windows)}`:`M${X(st[0][0]).toFixed(1)},${Y(st[0][1]).toFixed(1)}`;st.forEach(p=>{d+=`H${X(p[0]).toFixed(1)}V${Y(p[1]).toFixed(1)}`});d+=`H${W-R}`;
+  g+=`<path d="${d}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>`}
+ s.events.forEach(e=>{if(!["down","choke","raise"].includes(e[1]))return;const v=at(s,e[0]).w??0,c={down:"--bad",choke:"--warn",raise:"--ok"}[e[1]],y=e[1]==="raise"?Y(capAt(s,e[0])):Y(v);
+  g+=`<text x="${X(e[0]).toFixed(1)}" y="${(y+4).toFixed(1)}" text-anchor="middle" font-size="11" fill="var(${c})" stroke="var(--panel2)" stroke-width="2.5" paint-order="stroke">${{down:"▼",choke:"◆",raise:"▲"}[e[1]]}</text>`});
+ g+=`<text x="${L}" y="${H-3}" class="ax">${tf(t0)}</text><text x="${W-R}" y="${H-3}" text-anchor="end" class="ax">now</text>`;
+ g+=`<line class="xh" x1="0" x2="0" y1="${T}" y2="${T+ph}" stroke="var(--dim)" visibility="hidden"/><rect class="hit" x="${L}" y="${T}" width="${pw}" height="${ph}" fill="transparent"/></svg>`;
+ const nw=s.now,dn=evCount(s,"down"),ch=evCount(s,"choke"),ra=evCount(s,"raise"),downMin=Math.round(s.outages.reduce((a,o)=>a+o[1]-o[0],0)/60);
+ return `<div class="m" data-i="${i}"><h3>${esc(title(s))}<span>now ${nw.windows??"-"}×${nw.threads??"-"} · cap ${nw.cap??"-"}${nw.fell_at?` · fell at ${nw.fell_at}`:""}</span></h3>
+  <div class="chart">${g}</div><div class="ev"><span><span class="mk raise">▲</span>${ra}</span><span><span class="mk choke">◆</span>${ch}</span><span><span class="mk down">▼</span>${dn}</span>${downMin?`<span>${downMin} min down</span>`:""}<span>peak ${peak(s)} windows</span></div></div>`}
+function mults(){
+ let S=D.sources.filter(s=>s.family==="gepnic");
+ if(MFILT==="eventful")S=S.filter(s=>s.events.some(e=>["down","choke","raise"].includes(e[1]))||s.outages.length);
+ const order={events:(a,b)=>b.events.length-a.events.length,peak:(a,b)=>peak(b)-peak(a),down:(a,b)=>b.outages.reduce((x,o)=>x+o[1]-o[0],0)-a.outages.reduce((x,o)=>x+o[1]-o[0],0),name:(a,b)=>title(a).localeCompare(title(b))};
+ S.sort(order[MSORT]);MS=S;
+ $("mults").innerHTML=S.length?S.map(mult).join(""):'<div class="dim">Nothing happened in this range.</div>'}
+let MS=[];
+$("mults").addEventListener("pointermove",ev=>{const card=ev.target.closest(".m");if(!card)return;const hit=ev.target.closest("rect.hit"),c=card.querySelector(".chart"),xh=c.querySelector(".xh");
+ const tp=Hub.tip(c);if(!hit){tp.hide();xh.setAttribute("visibility","hidden");return}
+ const s=MS[+card.dataset.i],svg=c.querySelector("svg"),r=svg.getBoundingClientRect(),W=300,L=26,R=6,sx=(ev.clientX-r.left)*W/r.width,t=D.since+(sx-L)/(W-L-R)*(D.now-D.since),v=at(s,t);
+ xh.setAttribute("x1",sx);xh.setAttribute("x2",sx);xh.setAttribute("visibility","visible");
+ const near=s.events.filter(e=>Math.abs(e[0]-t)<(D.now-D.since)/60).map(e=>e[2]);
+ tp.show(ev.clientX-c.getBoundingClientRect().left,ev.clientY-c.getBoundingClientRect().top,tf(t),[{color:"var(--s1)",value:v.w??"-",label:"windows allowed"},{value:v.th??"-",label:"threads"},{value:capAt(s,t)??"-",label:"ceiling"}]
+  .concat(v.k?[KIND[v.k]+(v.sr!=null?` at ${v.sr} s a request`:"")]:[]).concat(downAt(s,t-60,t+60)?[{color:"var(--bad)",value:"down",label:"not answering"}]:[]).concat(near))});
+$("mults").addEventListener("pointerleave",()=>document.querySelectorAll("#mults .tip").forEach(t=>t.hidden=true));
+
+async function tick(){try{[D,SC]=await Promise.all([j("/api/throttle?hours="+RANGES[RANGE]),j("/api/scrapes")]);stats();heat();mults();$("updated").textContent="updated "+new Date().toLocaleTimeString()}
+ catch(e){if(e!==0)$("updated").textContent="update failed, retrying"}}
+seg($("range"),Object.keys(RANGES).map(k=>[k,k]),RANGE,"range",k=>{RANGE=k;tick()});
+seg($("hsort"),[["peak","Most windows"],["events","Most events"],["down","Most downtime"],["name","Name"]],HSORT,"hsort",k=>{HSORT=k;if(D)heat()});
+seg($("msort"),[["events","Most events"],["peak","Most windows"],["down","Most downtime"],["name","Name"]],MSORT,"msort",k=>{MSORT=k;if(D)mults()});
+seg($("mfilt"),[["eventful","With events"],["all","All portals"]],MFILT,"mfilt",k=>{MFILT=k;if(D)mults()});
+let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D)heat()},150)});
+tick();setInterval(tick,60000);
+</script></body></html>

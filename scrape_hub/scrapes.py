@@ -10,6 +10,7 @@ that the name decides:
 So a new scrape shows up on the overview by itself, as its own family.
 """
 import os
+import re
 import time
 
 from . import fleet
@@ -329,4 +330,82 @@ def traffic_range(c, minutes):
             cols[k] = [round(v, 2) for v in cols[k]]
     data = {"minutes": minutes, "bucket": bucket, "t": ts, "sources": src, "generated": time.time()}
     _trange[minutes] = (time.time(), data)
+    return data
+
+
+def _kind(reason):
+    r = reason or ""
+    if "went down at" in r:
+        return "down"
+    if r.startswith("choked at"):
+        return "choke"
+    if r.startswith("10 healthy minutes"):
+        return "raise"
+    if "restored to" in r:
+        return "restore"
+    if "is down: everything holds" in r:
+        return "hold"
+    if r.endswith(": halve"):
+        return "halve"
+    if r.endswith("ease off"):
+        return "ease"
+    if r.endswith(": more"):
+        return "more"
+    return "other"
+
+
+_thist = {}
+
+
+def throttle_history(c, hours=24):
+    """Everything the throttle decided per source over the last `hours`, for the throttle page (cached a minute):
+    per source the windows it allowed and the threads per process after every decision, the window cap after every cap change, the
+    outages of its portal (from the hub's checks) and its settings now."""
+    hours = max(1, min(int(hours), 168))
+    hit = _thist.get(hours)
+    if hit and time.time() - hit[0] < 60:
+        return hit[1]
+    from .app import find_outages
+    since = time.time() - hours * 3600
+    projects = {r["name"]: r["settings"] or {} for r in c.execute("SELECT name, settings FROM projects WHERE settings ? 'adaptive'").fetchall()}
+    rows = c.execute("""SELECT project, extract(epoch FROM at)::float8 AS t, threads_from, threads_to, claimed_from, claimed_to, s_per_req, reason
+                        FROM adjustments WHERE at > to_timestamp(%s) ORDER BY at""", (since,)).fetchall()
+    first_before = {r["project"]: r for r in c.execute(
+        """SELECT DISTINCT ON (project) project, threads_to, claimed_to, reason FROM adjustments WHERE at <= to_timestamp(%s)
+           ORDER BY project, at DESC""", (since,)).fetchall()}
+    out = {}
+    for name, st in projects.items():
+        fam, src, stage = place(name, st)
+        if stage == "count":
+            continue
+        out[name] = {"family": fam, "source": src, "project": name, "steps": [], "caps": [], "events": [], "outages": [],
+                     "now": {"threads": st.get("threads"), "windows": st.get("max_claimed"), "cap": (st.get("adaptive") or {}).get("max_windows"),
+                             "fell_at": (st.get("adaptive") or {}).get("fell_at")}, "probe": st.get("probe")}
+        b = first_before.get(name)
+        if b:
+            out[name]["start"] = {"threads": b["threads_to"], "windows": b["claimed_to"]}
+    for r in rows:
+        s = out.get(r["project"])
+        if not s:
+            continue
+        k = _kind(r["reason"])
+        m = re.search(r"window cap (\d+) -> (\d+)", r["reason"] or "") or re.search(r"restored to (\d+)", r["reason"] or "")
+        if m:
+            if not s["caps"] and m.lastindex == 2:
+                s["caps"].append([since, int(m.group(1))])
+            s["caps"].append([r["t"], int(m.group(m.lastindex))])
+        if r["claimed_to"] is not None and k not in ("down", "choke", "raise", "restore"):
+            s["steps"].append([r["t"], r["claimed_to"], r["threads_to"], k, round(r["s_per_req"], 2) if r["s_per_req"] is not None else None])
+        if k in ("down", "choke", "raise", "restore", "halve", "hold"):
+            s["events"].append([r["t"], k, (r["reason"] or "")[:160]])
+    targets = [s["probe"] for s in out.values() if s.get("probe")]
+    checks = {}
+    for r in c.execute("""SELECT target, extract(epoch FROM at)::float8 AS t, ok FROM probes WHERE target = ANY(%s) AND at > to_timestamp(%s)
+                          ORDER BY at""", (targets, since)).fetchall():
+        checks.setdefault(r["target"], []).append((r["t"], r["ok"]))
+    for s in out.values():
+        if s.get("probe") and s["probe"] in checks:
+            s["outages"] = [[a, b, g] for a, b, g in find_outages(checks[s["probe"]])]
+    data = {"hours": hours, "since": since, "now": time.time(), "sources": list(out.values())}
+    _thist[hours] = (time.time(), data)
     return data
