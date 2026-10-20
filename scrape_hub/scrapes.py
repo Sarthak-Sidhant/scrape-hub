@@ -112,6 +112,12 @@ def build(c):
     probe_24 = {r["target"]: r for r in c.execute(
         """SELECT target, count(*)::int AS n, count(*) FILTER (WHERE NOT ok)::int AS failed FROM probes
            WHERE target = ANY(%s) AND at > now() - interval '24 hours' GROUP BY 1""", (list(probe_names),)).fetchall()}
+    probe_hours = {}      # the last 24 hours, one cell an hour: [hour epoch, checks, failed, median ms of the answered ones]
+    for r in c.execute("""SELECT target, extract(epoch FROM date_trunc('hour', at))::bigint AS h, count(*)::int AS n,
+                                 count(*) FILTER (WHERE NOT ok)::int AS failed, (percentile_cont(0.5) WITHIN GROUP (ORDER BY ms) FILTER (WHERE ok))::int AS ms
+                          FROM probes WHERE target = ANY(%s) AND at > date_trunc('hour', now()) - interval '23 hours' GROUP BY 1, 2 ORDER BY 2""",
+                       (list(probe_names),)).fetchall():
+        probe_hours.setdefault(r["target"], []).append([r["h"], r["n"], r["failed"], r["ms"]])
     probe_5 = {}
     for r in c.execute("""SELECT target, ok FROM (SELECT target, ok, row_number() OVER (PARTITION BY target ORDER BY at DESC) AS k FROM probes
                           WHERE target = ANY(%s) AND at > now() - interval '10 minutes') x WHERE k <= 5""", (list(probe_names),)).fetchall():
@@ -174,7 +180,8 @@ def build(c):
             "family": fam, "source": src, "title": portal["title"] if portal else (main["title"] or src),
             "site": portal["portal"] if portal else None, "url": portal["app_url"] if portal else None, "status": status,
             "probe": {"ok": pr["ok"], "ms": pr["ms"], "detail": (pr["detail"] or "")[:160], "at": pr["at"]} if pr else None,
-            "uptime_24h": (1 - p24["failed"] / p24["n"]) if p24 and p24["n"] else None,
+            "uptime_24h": (1 - p24["failed"] / p24["n"]) if p24 and p24["n"] else None, "probe_target": s["probe"],
+            "hours": probe_hours.get(s["probe"], []) if s["probe"] else [],
             "expected": expected_total, "parked": parked, "target": target, "saved": saved, "records": main["records"], "left": left,
             "rate_10m": rate, "rate_60m": sum(st["rate_60m"] for st in s["stages"].values()),
             # over the last hour, so a portal that is down for a few minutes does not show a two-year ETA
@@ -284,4 +291,42 @@ def traffic(c):
     data = {"per_min": shape(total), "sources": {k: shape(v) for k, v in by_source.items()},
             "series": [{"t": t, **shape(m)} for t, m in sorted(series.items())], "generated": time.time()}
     _traffic["data"], _traffic["at"] = data, time.time()
+    return data
+
+
+TRAFFIC_COLS = {"pages": ("n_http",), "docs": ("doc_stored", "doc_refused", "doc_failed"), "docs_refused": ("doc_refused",),
+                "logins": ("sessions_new",), "captcha_ok": ("captcha_ok",), "captcha_fail": ("captcha_fail",), "bytes": ("uploaded_bytes",),
+                "dropped": ("http_error",), "throttled": ("http_503", "http_429", "http_403"), "t_http": ("t_http_s",), "tenders": ("n_tenders",)}
+_trange = {}
+
+
+def traffic_range(c, minutes):
+    """Traffic per source over the last `minutes` (60, 360 or 1440) in buckets of 1, 5 or 15 minutes, every value per minute:
+    {"t": [bucket starts], "sources": {family/source: {col: [values]}}}. Cached for one bucket (at least a minute)."""
+    minutes = 60 if minutes <= 60 else 360 if minutes <= 360 else 1440
+    bucket = {60: 1, 360: 5, 1440: 15}[minutes]
+    hit = _trange.get(minutes)
+    if hit and time.time() - hit[0] < max(60, bucket * 60):
+        return hit[1]
+    names = sorted({n for cols in TRAFFIC_COLS.values() for n in cols})
+    end = int(time.time() // (bucket * 60) * (bucket * 60)) - bucket * 60      # the newest whole bucket (the current one is still filling)
+    ts = [end - (minutes // bucket - 1 - i) * bucket * 60 for i in range(minutes // bucket)]
+    idx = {t: i for i, t in enumerate(ts)}
+    src = {}
+    for r in c.execute("""SELECT project, (floor(extract(epoch FROM at) / %(b)s) * %(b)s)::bigint AS t, name, sum(value) AS v FROM metrics
+                          WHERE at >= to_timestamp(%(start)s) AND name = ANY(%(names)s) GROUP BY 1, 2, 3""",
+                       {"b": bucket * 60, "start": ts[0], "names": names}).fetchall():
+        i = idx.get(r["t"])
+        if i is None:
+            continue
+        fam, s, _ = place(r["project"], None)
+        cols = src.setdefault(f"{fam}/{s}", {k: [0.0] * len(ts) for k in TRAFFIC_COLS})
+        for col, members in TRAFFIC_COLS.items():
+            if r["name"] in members:
+                cols[col][i] += float(r["v"]) / bucket
+    for cols in src.values():
+        for k in cols:
+            cols[k] = [round(v, 2) for v in cols[k]]
+    data = {"minutes": minutes, "bucket": bucket, "t": ts, "sources": src, "generated": time.time()}
+    _trange[minutes] = (time.time(), data)
     return data

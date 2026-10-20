@@ -49,6 +49,15 @@
 .fams.compact{grid-template-columns:1fr;gap:10px}.fams.compact .fam{padding:10px 12px}.fams.compact .about{display:none}
 .tr-nums{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px 18px;margin:4px 0 10px}.tr-nums b{display:block;font-size:18px;line-height:1.2}.tr-nums span{color:var(--dim);font-size:11px}
 @media (max-width:900px){.fold{grid-template-columns:1fr}}
+.ut{display:flex;gap:1px;margin-top:5px;align-items:center}.ut i{flex:1;height:6px;border-radius:1px;background:var(--line)}
+.ut i.u{background:var(--ok)}.ut i.s{background:var(--warn)}.ut i.d{background:var(--bad)}.ut em{font-style:normal;font-size:10px;color:var(--dim);margin-left:6px;white-space:nowrap}
+.upt{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}.upt .head{align-items:center}
+.upt .tl{display:flex;gap:1px;height:22px;margin:8px 0 2px}.upt .tl i{flex:1;border-radius:1px;background:var(--line);min-width:1px}
+.upt .tl i.u{background:var(--ok)}.upt .tl i.s{background:var(--warn)}.upt .tl i.d{background:var(--bad)}
+.upt .ax2{display:flex;justify-content:space-between;font-size:10px;color:var(--dim)}
+.upt table{margin-top:8px}.upt .lg{margin-top:4px}
+.trt td,.trt th{white-space:nowrap}.trt th[data-sort]{cursor:pointer}.trt th[data-sort]:hover{color:var(--text)}.trt th.on{color:var(--text)}
+.trt tr.row{cursor:pointer}.trt tr.row:hover td{background:var(--panel2)}.trt svg{width:90px;height:16px;display:inline-block;vertical-align:middle}
 .empty{color:var(--dim);font-size:12px;padding:8px 0}
 .more{margin-top:12px;font-size:12px;color:var(--dim)}
 @media (max-width:700px){.left .lr{grid-template-columns:96px minmax(0,1fr) 70px}.left .lr .n .dim{display:none}.host{grid-template-columns:1fr}header .sp{display:none}header>span.dim{flex:1 1 100%;font-size:11px}}
@@ -84,8 +93,10 @@
 <section><div class="head"><div><h2>Object storage and cost</h2><p class="lede">Tender pages and documents (B2), plus eprocure's pages, backups and archived telemetry (R2). Neither reports its size, so a daily listing measures each bucket and the runners' upload counts fill in the hours since.</p></div></div>
 <div id="objbox"><div class="empty">loading</div></div></section>
 </div>
-<section id="trsec"><div class="head"><div><h2>Traffic to the sites</h2><p class="lede">What our runners send to the portals and pull from them, from the counters they report (last 10 minutes, per minute). A login is three requests: the search page, a captcha and the submit.</p></div></div>
-<div id="trbox"><div class="empty">loading</div></div></section>
+<section id="trsec"><div class="head"><div><h2>Traffic to the sites</h2><p class="lede">What our runners send to the portals and pull from them, from the counters they report, per minute. A login is three requests: the search page, a captcha and the submit; "requests" adds pages, document downloads and logins.</p></div>
+<div style="display:flex;gap:8px;flex-wrap:wrap"><div class="seg" id="trange" role="group" aria-label="time range"></div><div class="seg" id="tview" role="group" aria-label="view"></div></div></div>
+<div class="ctrl" style="margin-bottom:6px"><span class="lab">Show</span><div class="seg" id="tmetric" role="group" aria-label="what to show"></div></div>
+<div class="tr-nums" id="trnums"></div><div class="chart" id="trchart"></div><div id="trtable" class="scroll"></div></section>
 <section><div class="head"><div><h2>Throttle log</h2><p class="lede">Every minute the hub sets each source's threads and windows in flight from how it answers; caps go up after 10 healthy minutes at the ceiling and down when a source chokes or falls over.</p></div>
 <div class="seg" id="logf" role="group" aria-label="log filter"><button data-c="1" aria-pressed="true">Cap changes</button><button data-c="0" aria-pressed="false">Everything</button></div></div>
 <div class="scroll"><table class="log" id="log"></table></div></section>
@@ -174,6 +185,14 @@ function visible(d){
  return S.sort(by[SORT])}
 function spark(v,status){const n=v.length,mx=Math.max(1,...v),W=200,H=20,w=W/n;
  return `<svg class="sp" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${v.map((x,i)=>x?`<rect x="${(i*w+.5).toFixed(1)}" y="${(H-Math.max(1.5,x/mx*H)).toFixed(1)}" width="${(w-1).toFixed(1)}" height="${Math.max(1.5,x/mx*H).toFixed(1)}" rx="1" fill="var(${status==="down"?"--bad":"--s1"})" opacity="${status==="parked"||status==="done"?.5:.9}"/>`:"").join("")}</svg>`}
+// one cell an hour for the last 24 hours: green answered, amber slow or some checks failed, red mostly down, grey not checked
+function ucls(n,failed,ms){return !n?"":failed/n>=.5?"d":failed||ms>=3000?"s":"u"}
+function ustrip(s){
+ if(!s.probe_target)return"";
+ const by=new Map(s.hours.map(h=>[h[0],h])),now=Math.floor(Date.now()/3600e3)*3600;let c="";
+ for(let i=23;i>=0;i--){const t=now-i*3600,h=by.get(t),lab=new Date(t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+  c+=h?`<i class="${ucls(h[1],h[2],h[3]??0)}" title="${lab}: ${h[1]-h[2]} of ${h[1]} checks answered${h[3]!=null?", median "+h[3]+" ms":""}"></i>`:`<i title="${lab}: no checks"></i>`}
+ return `<div class="ut" aria-label="uptime over the last 24 hours">${c}<em>${s.uptime_24h!=null?pct(s.uptime_24h,s.uptime_24h>.995?1:0)+" up":""}</em></div>`}
 function tile(s){
  const p=s.target?Math.min(1,s.saved/s.target):(s.status==="done"?1:0),th=s.throttle;
  const right=s.status==="done"?"finished":s.status==="parked"?`${fmt(s.parked)} parked`:s.status==="down"?(s.probe&&s.probe.at?"since check "+ago(s.probe.at)+" ago":"not answering"):s.eta_s?"~"+dur(s.eta_s)+" left":"-";
@@ -181,7 +200,7 @@ function tile(s){
   <div class="top"><span class="nm" title="${esc(s.title)}">${esc(s.title)}</span><span class="pc">${pct(p,0)}</span></div>
   <div class="pb"><i style="width:${p*100}%;background:var(${s.status==="down"?"--bad":s.status==="slow"?"--warn":s.status==="done"?"--accent":"--ok"})"></i></div>
   <div class="ln"><span class="stl s-${s.status}">${STATUS[s.status]}${s.rate_10m?` · ${fmt(Math.round(s.rate_10m))}/min`:""}</span><span class="dim">${esc(right)}</span></div>
-  ${spark(s.spark,s.status)}
+  ${spark(s.spark,s.status)}${ustrip(s)}
   <div class="ln"><span class="dim">${fmt(s.saved)} of ${compact(s.target)}</span><span class="dim">${th&&th.windows!=null?`${th.windows}×${th.threads} · cap ${th.cap??"-"}`:""}</span></div></button>`}
 function detail(s){
  const w=s.windows||{},l=s.load,pr=s.probe,lc=s.last_change;
@@ -198,7 +217,34 @@ function detail(s){
    <div><b>${s.throttle&&s.throttle.windows!=null?`${s.throttle.windows} × ${s.throttle.threads}`:"-"}</b><span>windows × threads now${s.throttle&&s.throttle.cap?`, cap ${s.throttle.cap}`:""}</span></div>
    <div><b>${Object.entries(s.runners).map(([a,n])=>n).reduce((a,b)=>a+b,0)||"none"}</b><span>runner processes${Object.keys(s.runners).length?" ("+Object.entries(s.runners).map(([a,n])=>esc(a)+" "+n).join(", ")+")":""}</span></div></div>
   ${lc?`<div class="why">Last throttle change ${ago(lc.at)} ago: <b>${esc(lc.reason)}</b></div>`:""}
-  ${pr&&!pr.ok&&pr.detail?`<div class="why">Check said: ${esc(pr.detail)}</div>`:""}</div>`}
+  ${pr&&!pr.ok&&pr.detail?`<div class="why">Check said: ${esc(pr.detail)}</div>`:""}
+  ${s.probe_target?`<div class="upt"><div class="head"><h2 style="margin:0">Uptime and downtime</h2><div class="seg" role="group" aria-label="uptime range">${Object.keys(URANGE).map(k=>`<button data-ur="${k}" aria-pressed="${k===UR}">${k}</button>`).join("")}</div></div>
+   <div id="uptbody">${uptHtml(s.probe_target)}</div></div>`:""}</div>`}
+const URANGE={"24h":1440,"7d":10080};let UR=load("urange","24h");const UC=new Map();
+function fmtLen(sec){const m=Math.round(sec/60);return m<1?"under a minute":m<60?m+" min":Math.floor(m/60)+" h "+String(m%60).padStart(2,"0")+" min"}
+function uptHtml(target){
+ const k=target+"|"+UR,c=UC.get(k);
+ if(!c||Date.now()-c.at>60000)getUpt(target);
+ if(!c||!c.d)return'<div class="empty">loading the checks</div>';
+ const t=c.d,mins=URANGE[UR],B=t.bucket_min*60,end=Math.ceil(Date.now()/1000/B)*B,n=Math.round(mins/t.bucket_min),start=end-n*B;
+ const by=new Map(t.history.map(h=>[Math.floor(new Date(h.at)/1000/B)*B,h]));let cells="";
+ const tf=ts=>{const d=new Date(ts*1000);return (mins>1440?d.toLocaleDateString([],{day:"numeric",month:"short"})+" ":"")+d.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})};
+ for(let i=0;i<n;i++){const ts=start+i*B,h=by.get(ts);
+  cells+=h?`<i class="${ucls(h.n,h.failed,h.ms)}" title="${tf(ts)}: ${h.n-h.failed} of ${h.n} checks answered${h.failed===h.n?"":", slowest "+h.ms+" ms"}"></i>`:`<i title="${tf(ts)}: no checks"></i>`}
+ const outs=t.outages.slice().reverse(),span=mins*60;
+ return `<div class="dg">
+   <div><b class="${t.ok?"ok":"bad"}">${t.ok?"up":"down"}</b><span>${t.since?"since "+tf(new Date(t.since)/1000)+" ("+fmtLen((Date.now()-new Date(t.since))/1000)+")":""}</span></div>
+   <div><b>${t.uptime_pct==null?"-":t.uptime_pct+"%"}</b><span>of ${fmt(t.checks)} checks answered</span></div>
+   <div><b>${outs.length}</b><span>outage${outs.length===1?"":"s"} (3 or more failed checks in a row)</span></div>
+   <div><b>${t.down_seconds?fmtLen(t.down_seconds):"none"}</b><span>down in all${t.down_seconds?` (${(100*t.down_seconds/span).toFixed(1)}% of the time)`:""}</span></div>
+   <div><b>${t.longest_seconds?fmtLen(t.longest_seconds):"-"}</b><span>longest outage</span></div></div>
+  <div class="tl" role="img" aria-label="checks over the last ${UR}, ${t.bucket_min} minutes a cell">${cells}</div>
+  <div class="ax2"><span>${tf(start)}</span><span>${tf(start+(end-start)/2)}</span><span>now</span></div>
+  <div class="lg"><span><i style="background:var(--ok)"></i>answered</span><span><i style="background:var(--warn)"></i>slow (3 s or more) or some checks failed</span><span><i style="background:var(--bad)"></i>down</span><span class="dim">${t.bucket_min} min a cell, one check a minute from the hub</span></div>
+  ${outs.length?`<div class="tblwrap" style="max-height:220px"><table><tr><th>outage</th><th class="n">length</th></tr>${outs.slice(0,30).map(o=>`<tr><td>${tf(o.start)} to ${o.going?"now (ongoing)":tf(o.end)}</td><td class="n ${o.going?"bad":""}">${fmtLen(o.seconds)}</td></tr>`).join("")}</table></div>`:`<div class="note">No outages in the last ${UR}.</div>`}`}
+async function getUpt(target){const k=target+"|"+UR;if(UC.get(k)?.loading)return;UC.set(k,{...(UC.get(k)||{}),loading:true});
+ try{const r=await j(`/api/probes?target=${encodeURIComponent(target)}&minutes=${URANGE[UR]}`);UC.set(k,{at:Date.now(),d:r.targets[0]})}catch(e){UC.delete(k);return}
+ const el=$("uptbody");if(el&&D){const s=D.sources.find(x=>x.family+"/"+x.source===OPEN);if(s&&s.probe_target===target)el.innerHTML=uptHtml(target)}}
 function tiles(d){
  const S=visible(d),fam=d.families.find(f=>f.family===FAM);
  $("srctitle").textContent=(fam?fam.title+": ":"")+"every source ("+S.length+")";
@@ -206,7 +252,8 @@ function tiles(d){
  let h="",cols=Math.max(1,Math.floor(($("tiles").clientWidth+10)/242)),open=S.findIndex(s=>s.family+"/"+s.source===OPEN);
  S.forEach((s,i)=>{h+=tile(s);if(open>=0&&(i===S.length-1||i%cols===cols-1)&&Math.floor(i/cols)===Math.floor(open/cols))h+=detail(S[open])});
  $("tiles").innerHTML=h}
-$("tiles").addEventListener("click",e=>{const t=e.target.closest(".t");if(!t)return;OPEN=OPEN===t.dataset.src?null:t.dataset.src;tiles(D)});
+$("tiles").addEventListener("click",e=>{const ur=e.target.closest("[data-ur]");if(ur){UR=ur.dataset.ur;store("urange",UR);tiles(D);return}
+ const t=e.target.closest(".t");if(!t)return;OPEN=OPEN===t.dataset.src?null:t.dataset.src;tiles(D)});
 $("fams").addEventListener("click",e=>{const f=e.target.closest(".fam");if(!f)return;FAM=FAM===f.dataset.fam?"":f.dataset.fam;store("fam",FAM);fams(D);tiles(D);leftChart(D);rateChart()});
 $("fams").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();e.target.closest(".fam")?.click()}});
 
@@ -293,25 +340,63 @@ async function storageBox(){
    values:(i)=>H[i][1],height:120,yFmt:bytes,tipFmt:bytes,aria:"bytes uploaded per hour",tipHead:(l,i)=>`${l}:00 hour · ${fmt(H[i][2])} files`})});
 }
 
-async function trafficBox(){
+async function trafficBox(){        // the 10-minute snapshot for the numbers above the fold and the tile details
  try{T=await j("/api/traffic")}catch(e){return}
- if(D)kpis(D);
- const t=T.per_min;
- const rows=Object.entries(T.sources).map(([k,v])=>({k,v,s:D&&D.sources.find(x=>x.family+"/"+x.source===k)})).filter(r=>r.v.requests>0).sort((a,b)=>b.v.requests-a.v.requests);
- $("trbox").innerHTML=`<div class="tr-nums">
-   <div><b>${fmt(Math.round(t.requests))}</b><span>requests a minute in all</span></div>
-   <div><b>${fmt(Math.round(t.pages))}</b><span>page requests${t.s_per_req!=null?` · ${t.s_per_req.toFixed(2)} s each`:""}</span></div>
-   <div><b>${fmt(Math.round(t.docs))}</b><span>document downloads${t.docs?` · ${pct(t.docs_refused/t.docs,0)} refused`:""}</span></div>
-   <div><b>${fmt(Math.round(t.logins))}</b><span>logins (search + captcha)${t.captcha_ok!=null?` · ${pct(t.captcha_ok,0)} captchas solved`:""}</span></div>
-   <div><b>${mbps(t.bytes)}</b><span>pulled from the sites (${bytes(t.bytes)}/min)</span></div>
-   <div><b class="${t.pages&&t.dropped/t.pages>0.05?"warn":""}">${fmt(Math.round(t.dropped))} · ${fmt(Math.round(t.throttled))}</b><span>dropped connections · HTTP 503/429/403 a minute</span></div></div>
-  <div class="chart" id="trchart"></div>
-  <details class="bk" open><summary>Per site, busiest first</summary><div class="tblwrap"><table><tr><th>site</th><th class="n">requests/min</th><th class="n">pages</th><th class="n">s each</th><th class="n">docs</th><th class="n">logins</th><th class="n">dropped</th><th class="n">pulled</th></tr>
-  ${rows.map(r=>`<tr><td>${esc(r.s?r.s.title:r.k)}</td><td class="n">${fmt(Math.round(r.v.requests))}</td><td class="n">${fmt(Math.round(r.v.pages))}</td><td class="n">${r.v.s_per_req!=null?r.v.s_per_req.toFixed(2):"-"}</td><td class="n">${fmt(Math.round(r.v.docs))}</td><td class="n">${fmt(Math.round(r.v.logins))}</td><td class="n ${r.v.pages&&r.v.dropped/r.v.pages>0.05?"warn":""}">${fmt(Math.round(r.v.dropped))}</td><td class="n">${mbps(r.v.bytes)}</td></tr>`).join("")}</table></div></details>`;
- const L=T.series;if(L.length>1)Hub.lines($("trchart"),{labels:L.map(p=>new Date(p.t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})),
-  series:[{label:"page requests",color:"--s1",values:L.map(p=>p.pages)},{label:"document downloads",color:"--s2",values:L.map(p=>p.docs)},{label:"logins",color:"--s3",values:L.map(p=>p.logins)}],
-  height:170,yFmt:compact,tipFmt:v=>fmt(Math.round(v))+"/min",aria:"requests per minute to the sites over the last two hours"});
-}
+ if(D)kpis(D)}
+const TRANGES={"1h":60,"6h":360,"24h":1440};let TRANGE=load("trange","1h"),TMET=load("tmetric","requests"),TVIEW="chart",TSORT=load("tsort","requests"),TR=null;
+const TM={
+ requests:{label:"Requests",unit:"/min",v:c=>i=>c.pages[i]+c.docs[i]+3*c.logins[i]+c.captcha_ok[i]+c.captcha_fail[i],f:v=>fmt(Math.round(v))},
+ pages:{label:"Pages",unit:"/min",v:c=>i=>c.pages[i],f:v=>fmt(Math.round(v))},
+ docs:{label:"Documents",unit:"/min",v:c=>i=>c.docs[i],f:v=>fmt(Math.round(v))},
+ logins:{label:"Logins",unit:"/min",v:c=>i=>c.logins[i],f:v=>fmt(Math.round(v*10)/10)},
+ data:{label:"Data pulled",unit:"",v:c=>i=>c.bytes[i],f:mbps},
+ dropped:{label:"Dropped",unit:"/min",v:c=>i=>c.dropped[i]+c.throttled[i],f:v=>fmt(Math.round(v*10)/10)},
+ sreq:{label:"Seconds a request",unit:"",ratio:true,v:c=>i=>c.pages[i]?c.t_http[i]/c.pages[i]:null,f:v=>v==null?"-":v.toFixed(2)+" s"}};
+const tsum=(a)=>a.reduce((x,y)=>x+y,0);
+function srcTitle(k){const s=D&&D.sources.find(x=>x.family+"/"+x.source===k);return s?s.title:k.split("/")[1]}
+function tstats(c){const n=c.pages.length,sum=k=>tsum(c[k]),reqs=c.pages.map((_,i)=>TM.requests.v(c)(i));
+ const pages=sum("pages"),docs=sum("docs"),caps=sum("captcha_ok")+sum("captcha_fail");
+ return {requests:tsum(reqs)/n,peak:Math.max(...reqs),pages:pages/n,docs:docs/n,refused:docs?sum("docs_refused")/docs:null,logins:sum("logins")/n,
+  captcha:caps?sum("captcha_ok")/caps:null,dropped:pages?(sum("dropped"))/pages:null,throttled:sum("throttled")/n,data:sum("bytes")/n,total:sum("bytes")*TR.bucket,
+  sreq:pages?sum("t_http")/pages:null,tenders:sum("tenders")/n}}
+async function trafficRange(){
+ try{TR=await j("/api/traffic?minutes="+TRANGES[TRANGE])}catch(e){return}
+ drawTraffic()}
+function drawTraffic(){
+ if(!TR)return;const M=TM[TMET],keys=Object.keys(TR.sources),n=TR.t.length;
+ if(!keys.length){$("trnums").innerHTML="";$("trchart").innerHTML='<div class="empty">No traffic in this range.</div>';$("trtable").innerHTML="";return}
+ const all={};for(const col of Object.keys(TR.sources[keys[0]]))all[col]=TR.t.map((_,i)=>tsum(keys.map(k=>TR.sources[k][col][i])));
+ const A=tstats(all);
+ $("trnums").innerHTML=`<div><b>${fmt(Math.round(A.requests))}</b><span>requests a minute (peak ${fmt(Math.round(A.peak))})</span></div>
+  <div><b>${fmt(Math.round(A.pages))}</b><span>page requests${A.sreq!=null?` · ${A.sreq.toFixed(2)} s each`:""}</span></div>
+  <div><b>${fmt(Math.round(A.docs))}</b><span>document downloads${A.refused!=null?` · ${pct(A.refused,1)} refused`:""}</span></div>
+  <div><b>${fmt(Math.round(A.logins))}</b><span>logins${A.captcha!=null?` · ${pct(A.captcha,0)} captchas solved`:""}</span></div>
+  <div><b>${mbps(A.data)}</b><span>pulled · ${bytes(A.total)} in the last ${TRANGE}</span></div>
+  <div><b class="${A.dropped>0.05?"warn":""}">${A.dropped!=null?pct(A.dropped,1):"-"}</b><span>of page requests dropped · ${fmt(Math.round(A.throttled))} refused (503/429/403) a minute</span></div>`;
+ const lab=t=>new Date(t*1000).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"});
+ const per=Object.fromEntries(keys.map(k=>{const c=TR.sources[k],f=M.v(c);return [k,TR.t.map((_,i)=>f(i))]}));
+ const weight=k=>M.ratio?tsum(TR.sources[k].pages):tsum(per[k].map(v=>v||0));
+ const top=keys.filter(k=>weight(k)>0).sort((a,b)=>weight(b)-weight(a)).slice(0,6);
+ const order=top.slice().sort((a,b)=>{const sa=D&&D.sources.find(x=>x.family+"/"+x.source===a),sb=D&&D.sources.find(x=>x.family+"/"+x.source===b);return (sb?sb.target:0)-(sa?sa.target:0)});
+ const series=order.map((k,i)=>({key:k,label:srcTitle(k),color:"--s"+(i+1)}));
+ const el=$("trchart");
+ if(TVIEW==="table"){el.innerHTML=`<div class="tblwrap"><table><tr><th>${TR.bucket>1?TR.bucket+" min from":"minute"}</th>${(M.ratio?[]:[{label:"all sites"}]).concat(series).map(s=>`<th class="n">${esc(s.label)}</th>`).join("")}</tr>${TR.t.map((t,i)=>i).reverse().map(i=>`<tr><td>${lab(TR.t[i])}</td>${M.ratio?"":`<td class="n">${M.f(tsum(keys.map(k=>per[k][i]||0)))}</td>`}${series.map(s=>`<td class="n">${M.f(per[s.key][i])}</td>`).join("")}</tr>`).join("")}</table></div>`}
+ else if(M.ratio){const allv=TR.t.map((_,i)=>all.pages[i]?all.t_http[i]/all.pages[i]:null);
+  Hub.lines(el,{labels:TR.t.map(lab),series:[{label:"all sites",color:"--sx",values:allv}].concat(series.map(s=>({label:s.label,color:s.color,values:per[s.key]}))),height:230,yFmt:v=>v.toFixed(1)+" s",tipFmt:M.f,aria:"seconds per request by site"})}
+ else{const other=TR.t.map((_,i)=>tsum(keys.filter(k=>!top.includes(k)).map(k=>per[k][i]||0)));
+  Hub.bars(el,{labels:TR.t.map(lab),series:series.concat([{key:"__other",label:"everything else",color:"--sx"}]),values:(i,k)=>k==="__other"?other[i]:per[k][i]||0,height:230,
+   yFmt:TMET==="data"?(v=>mbps(v)):compact,tipFmt:M.f,aria:M.label+" by site",tipHead:(l,i)=>`${l}${TR.bucket>1?" – "+lab(TR.t[i]+TR.bucket*60):""} · ${M.label.toLowerCase()}${M.unit}`})}
+ const rows=keys.map(k=>({k,st:tstats(TR.sources[k]),line:per[k]})).filter(r=>r.st.requests>0);
+ const cols=[["requests","requests/min",r=>fmt(Math.round(r.st.requests))],["pages","pages",r=>fmt(Math.round(r.st.pages))],["sreq","s each",r=>r.st.sreq!=null?r.st.sreq.toFixed(2):"-"],
+  ["docs","docs",r=>fmt(Math.round(r.st.docs))],["refused","refused",r=>r.st.refused!=null?pct(r.st.refused,0):"-"],["logins","logins",r=>fmt(Math.round(r.st.logins*10)/10)],
+  ["captcha","captcha ok",r=>r.st.captcha!=null?pct(r.st.captcha,0):"-"],["dropped","dropped",r=>r.st.dropped!=null?pct(r.st.dropped,1):"-"],["throttled","503s",r=>fmt(Math.round(r.st.throttled*10)/10)],["data","pulled",r=>mbps(r.st.data)]];
+ rows.sort((a,b)=>(b.st[TSORT]??-1)-(a.st[TSORT]??-1));
+ const sp=v=>{const vals=v.map(x=>x||0),mx=Math.max(...vals,1e-9),W=90,H=16,w=W/vals.length;return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true">${vals.map((x,i)=>x?`<rect x="${(i*w).toFixed(1)}" y="${(H-x/mx*H).toFixed(1)}" width="${Math.max(.6,w-.3).toFixed(1)}" height="${(x/mx*H).toFixed(1)}" fill="var(--s1)"/>`:"").join("")}</svg>`};
+ $("trtable").innerHTML=`<table class="trt"><tr><th>site</th><th>${esc(M.label.toLowerCase())}, last ${TRANGE}</th>${cols.map(([k,l])=>`<th class="n${k===TSORT?" on":""}" data-sort="${k}">${l}${k===TSORT?" ↓":""}</th>`).join("")}</tr>
+  ${rows.map(r=>`<tr class="row" data-src="${esc(r.k)}"><td>${esc(srcTitle(r.k))}</td><td>${sp(r.line)}</td>${cols.map(([k,,f])=>`<td class="n ${k==="dropped"&&r.st.dropped>0.05?"warn":""}">${f(r)}</td>`).join("")}</tr>`).join("")}</table>
+  <div class="note">Averages per minute over the last ${TRANGE}; click a heading to sort, a row to open that site's tile.</div>`}
+$("trtable").addEventListener("click",e=>{const h=e.target.closest("[data-sort]");if(h){TSORT=h.dataset.sort;store("tsort",TSORT);drawTraffic();return}
+ const r=e.target.closest("tr.row");if(!r)return;OPEN=r.dataset.src;STAT="all";FAM="";tiles(D);const t=document.querySelector(`.t[data-src="${CSS.escape(OPEN)}"]`);if(t)t.scrollIntoView({behavior:"smooth",block:"center"})});
 async function tick(){
  try{D=await j("/api/scrapes");kpis(D);fams(D);tiles(D);leftChart(D);
   $("dot").className="live";$("updated").textContent="updated "+new Date().toLocaleTimeString()}
@@ -319,7 +404,10 @@ async function tick(){
 seg($("fstat"),STATS,STAT,"stat",k=>{STAT=k;tiles(D)});
 seg($("fsort"),SORTS,SORT,"sort",k=>{SORT=k;tiles(D)});
 seg($("rrange"),Object.keys(RANGES).map(k=>[k,k]),RANGE,"range",k=>{RANGE=k;rateChart()});
+seg($("trange"),Object.keys(TRANGES).map(k=>[k,k]),TRANGE,"trange",k=>{TRANGE=k;trafficRange()});
+seg($("tmetric"),Object.entries(TM).map(([k,m])=>[k,m.label]),TMET,"tmetric",k=>{TMET=k;drawTraffic()});
+seg($("tview"),[["chart","Chart"],["table","Table"]],TVIEW,"tview",k=>{TVIEW=k;drawTraffic()});
 let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D)tiles(D)},150)});
-tick().then(()=>{rateChart();log();storageBox();trafficBox()});
-setInterval(tick,15000);setInterval(rateChart,60000);setInterval(log,30000);setInterval(storageBox,60000);setInterval(trafficBox,60000);
+tick().then(()=>{rateChart();log();storageBox();trafficBox();trafficRange()});
+setInterval(tick,15000);setInterval(rateChart,60000);setInterval(log,30000);setInterval(storageBox,60000);setInterval(trafficBox,60000);setInterval(trafficRange,60000);
 </script></body></html>

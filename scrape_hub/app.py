@@ -930,10 +930,12 @@ def storage_api():
 
 
 @app.get("/api/traffic", dependencies=[Depends(need_login)])
-def traffic_api():
-    """Requests, documents, logins and data our runners send to and pull from the sites, per minute (see scrapes.traffic)."""
+def traffic_api(minutes: int = 0):
+    """Requests, documents, logins and data our runners send to and pull from the sites, per minute: the last 10 minutes in all and per
+    source (no `minutes`), or per source over the last 60/360/1440 minutes in 1/5/15-minute buckets (see scrapes.traffic_range)."""
     with db.conn() as c:
-        return JSONResponse(json.loads(json.dumps(scrapes.traffic(c), default=_iso)))
+        data = scrapes.traffic_range(c, minutes) if minutes else scrapes.traffic(c)
+    return JSONResponse(json.loads(json.dumps(data, default=_iso)))
 
 
 @app.get("/api/adjustments", dependencies=[Depends(need_login)])
