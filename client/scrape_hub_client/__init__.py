@@ -51,10 +51,19 @@ class _Auth:
         url, bearer = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL"), os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
         if not url:
             raise RuntimeError("no OIDC available: add `permissions: id-token: write` or set SCRAPE_HUB_TOKEN")
-        r = requests.get(url, params={"audience": AUDIENCE}, headers={"Authorization": f"Bearer {bearer}"}, timeout=20)
-        r.raise_for_status()
-        self._tok, self._tok_exp = r.json()["value"], time.time() + 240  # GitHub tokens last ~5 min
-        return self._tok
+        # GitHub's token service has brief 503s; retry for ~2 min, and keep using the old token while it is still valid
+        for i in range(8):
+            try:
+                r = requests.get(url, params={"audience": AUDIENCE}, headers={"Authorization": f"Bearer {bearer}"}, timeout=20)
+                r.raise_for_status()
+                self._tok, self._tok_exp = r.json()["value"], time.time() + 240  # GitHub tokens last ~5 min
+                return self._tok
+            except (requests.RequestException, ValueError, KeyError):
+                if i == 7:
+                    raise
+                if self._tok and time.time() < self._tok_exp + 50:
+                    return self._tok
+                time.sleep(min(30, 2 ** i) * (0.5 + random.random()))
 
     def call(self, method, path, body=None, retries=4):
         last = None
