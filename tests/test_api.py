@@ -839,6 +839,8 @@ def test_throttle_resets_a_down_portal_to_the_bottom(client, clean):
     start(client, project="downsite")
     with db.conn() as c:
         c.execute("""UPDATE projects SET settings = '{"probe": "site", "threads": 9, "max_claimed": 14, "adaptive": {"max_windows": 20}}' WHERE name='downsite'""")
+        for i in range(14):
+            c.execute("INSERT INTO queue (project, key, partition_id, status, payload, claimed_at) VALUES ('downsite', %s, 0, 'claimed', '{}', now())", (f"w{i}",))
         for _ in range(3):
             c.execute("INSERT INTO probes (target, ok, ms) VALUES ('site', false, 20000)")
     with db.conn() as c:
@@ -885,6 +887,8 @@ def test_a_portal_that_falls_at_a_high_level_gets_a_lower_learned_cap(client, cl
     start(client, project="learn")
     with db.conn() as c:
         c.execute("""UPDATE projects SET settings = '{"probe": "site", "threads": 16, "max_claimed": 44, "adaptive": {"max_windows": 48}}' WHERE name='learn'""")
+        for i in range(44):      # 44 windows really in use when it fell
+            c.execute("INSERT INTO queue (project, key, partition_id, status, payload, claimed_at) VALUES ('learn', %s, 0, 'claimed', '{}', now())", (f"w{i}",))
         for _ in range(3):
             c.execute("INSERT INTO probes (target, ok, ms) VALUES ('site', false, 20000)")
     with db.conn() as c:
@@ -1054,3 +1058,18 @@ def test_a_few_failed_windows_on_a_fast_portal_do_not_teach_a_lower_limit(client
         adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 11, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
         st = c.execute("SELECT settings FROM projects WHERE name='tiny'").fetchone()["settings"]
     assert st["max_claimed"] == 40 and st["adaptive"]["max_windows"] == 40 and "fell_at" not in st["adaptive"]     # 1 of 5 failed: noise
+
+
+def test_an_outage_with_few_windows_in_use_teaches_nothing(client, clean):
+    import datetime
+    from scrape_hub.app import adapt_speeds
+    start(client, project="idle")
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"probe": "site2", "threads": 16, "max_claimed": 38, "adaptive": {"max_windows": 40}}' WHERE name='idle'""")
+        c.execute("INSERT INTO queue (project, key, partition_id, status, payload, claimed_at) VALUES ('idle', 'w', 0, 'claimed', '{}', now())")
+        for _ in range(3):
+            c.execute("INSERT INTO probes (target, ok, ms) VALUES ('site2', false, 20000)")
+    with db.conn() as c:
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 20, 30, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
+        st = c.execute("SELECT settings FROM projects WHERE name='idle'").fetchone()["settings"]
+    assert st["adaptive"]["max_windows"] == 40 and "fell_at" not in st["adaptive"] and st["max_claimed"] == 1   # held, but nothing learned

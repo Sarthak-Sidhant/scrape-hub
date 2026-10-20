@@ -94,6 +94,10 @@ def adapt_speeds(c, now=None):
             # had many windows on it, that level is too much for this server: the cap becomes 70% of it (learned, never raised again here).
             threads, windows = int(st.get("threads", 4)), int(st.get("max_claimed") or 1)
             cap = int(ad.get("max_windows", 24))
+            # learn from the windows actually open when it fell, not the ones allowed: a portal with one leftover window that has
+            # an outage of its own taught nothing about how much load it takes (2026-10-20: MP "went down at 38" with ~1 in use)
+            in_use = c.execute("SELECT count(*) AS n FROM queue WHERE project=%s AND status='claimed'", (p["name"],)).fetchone()["n"]
+            windows_allowed, windows = windows, min(windows, int(in_use))
             if windows >= 8 and windows * 0.7 < cap:
                 learned = max(4, int(windows * 0.7))
                 c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (learned, p["name"]))
@@ -103,9 +107,9 @@ def adapt_speeds(c, now=None):
                                                                  f"{st['probe']} went down at {windows} windows: window cap {cap} -> {learned}"))
             c.execute("""UPDATE projects SET settings = settings || jsonb_build_object('threads', 1, 'max_claimed', 1, 'adaptive_at', %s::float8,
                                                                                        'adaptive_phase', %s::text) WHERE name=%s""", (now.timestamp(), phase, p["name"]))
-            if (threads, windows) != (1, 1):
+            if (threads, windows_allowed) != (1, 1):
                 c.execute("""INSERT INTO adjustments (project, threads_from, threads_to, claimed_from, claimed_to, phase, reason)
-                             VALUES (%s,%s,1,%s,1,%s,%s)""", (p["name"], threads, windows, phase, f"{phase}: {st['probe']} is down: everything holds; restart from 1 thread, 1 window"))
+                             VALUES (%s,%s,1,%s,1,%s,%s)""", (p["name"], threads, windows_allowed, phase, f"{phase}: {st['probe']} is down: everything holds; restart from 1 thread, 1 window"))
             continue
         m = c.execute("""SELECT coalesce(sum(value) FILTER (WHERE name='n_http'), 0) AS n, coalesce(sum(value) FILTER (WHERE name='t_http_s'), 0) AS t,
                                 coalesce(sum(value) FILTER (WHERE name='http_error'), 0) AS e
