@@ -799,6 +799,12 @@ def finish(run_id: int, body: Finish, request: Request, who: Caller = Depends(ca
     return {"ok": True}
 
 
+# a claimed window may be taken over only when the runner holding it has gone silent (no call for STALL_AFTER_S), or as a backstop after
+# 6 x CLAIM_TIMEOUT_S; a live runner keeps its window however slow the portal is
+STALE_CLAIM = (f"(q.claimed_at < now() - interval '{6 * config.CLAIM_TIMEOUT_S} seconds' OR NOT EXISTS (SELECT 1 FROM runs r WHERE r.id = q.claimed_by "
+               f"AND r.state = 'running' AND r.last_seen > now() - interval '{config.STALL_AFTER_S} seconds'))")
+
+
 @app.post("/api/v1/runs/{run_id}/claim")
 def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(caller)):
     with db.conn() as c:
@@ -812,8 +818,10 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
             return {"items": [], "settings": settings}
         cap = int(settings.get("max_claimed") or 0)
         if cap:   # at most this many items of the project in flight at once, however many runners ask (protects a struggling target)
-            busy = c.execute("SELECT count(*) AS n FROM queue WHERE project=%s AND status='claimed' AND claimed_at > now() - make_interval(secs => %s)",
-                             (body.project, config.CLAIM_TIMEOUT_S)).fetchone()["n"]
+            # a window is busy while the runner holding it is alive, however long it takes (slow portals have windows over 30 minutes:
+            # counting by claim age let Haryana run 30 windows against a cap of 20, and let a live window be stolen, 2026-10-20)
+            busy = c.execute(f"SELECT count(*) AS n FROM queue q WHERE q.project=%s AND q.status='claimed' AND NOT ({STALE_CLAIM})",
+                             (body.project,)).fetchone()["n"]
             if busy >= cap:
                 c.execute("UPDATE runs SET last_seen=now() WHERE id=%s", (run_id,))
                 return {"items": [], "settings": settings, "queue": {"pending": 1, "claimed": busy, "retry": 0}}
@@ -822,14 +830,15 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
                WHERE (project, key) IN (
                    SELECT project, key FROM queue
                    WHERE project=%(project)s {part}
-                     AND (status='pending' OR (status='claimed' AND claimed_at < now() - make_interval(secs => %(timeout)s)))
+                     AND (status='pending' OR (status='claimed' AND {stale}))
                    ORDER BY partition_id, key LIMIT %(limit)s FOR UPDATE SKIP LOCKED)
                RETURNING key, payload, attempts"""
         args = {"run": run_id, "project": body.project, "total": max(1, run["total_jobs"]), "idx": run["job_index"],
                 "timeout": config.CLAIM_TIMEOUT_S, "limit": body.limit}
-        rows = c.execute(claim_sql.format(part="AND partition_id %% %(total)s = %(idx)s"), args).fetchall()
+        stale = STALE_CLAIM.replace("q.", "queue.").replace("%", "%%")
+        rows = c.execute(claim_sql.format(part="AND partition_id %% %(total)s = %(idx)s", stale=stale), args).fetchall()
         if not rows and body.steal:
-            rows = c.execute(claim_sql.format(part=""), args).fetchall()
+            rows = c.execute(claim_sql.format(part="", stale=stale), args).fetchall()
         retry_sql = """UPDATE queue SET status='claimed', claimed_by=%(run)s, claimed_at=now(), attempts=attempts+1
                WHERE (project, key) IN (
                    SELECT project, key FROM queue

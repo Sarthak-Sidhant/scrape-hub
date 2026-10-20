@@ -93,6 +93,7 @@ def test_stale_claim_is_reclaimed(client, clean):
     assert len(client.post(f"/api/v1/runs/{r}/claim", json={"project": "proj"}, headers=hdr()).json()["items"]) == 1
     with db.conn() as c:
         c.execute("UPDATE queue SET claimed_at = now() - interval '2 hours'")
+        c.execute("UPDATE runs SET last_seen = now() - interval '2 hours'")    # its runner went silent
     r2 = start(client, run_id="222")
     assert len(client.post(f"/api/v1/runs/{r2}/claim", json={"project": "proj"}, headers=hdr(run_id="222")).json()["items"]) == 1
 
@@ -1091,3 +1092,18 @@ def test_an_outage_during_a_nic_wide_problem_teaches_nothing(client, clean):
         adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 22, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
         st = c.execute("SELECT settings FROM projects WHERE name='wide'").fetchone()["settings"]
     assert st["max_claimed"] == 1 and st["adaptive"]["max_windows"] == 30 and "fell_at" not in st["adaptive"]   # held, nothing learned
+
+
+def test_a_slow_window_of_a_live_runner_stays_busy_and_is_not_stolen(client, clean):
+    rid = start(client, project="slowwin")
+    other = start(client, project="slowwin", job_index=1)
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"max_claimed": 1}' WHERE name='slowwin'""")
+        c.execute("INSERT INTO queue (project, key, partition_id, status, payload, claimed_by, claimed_at) VALUES ('slowwin', 'a', 0, 'claimed', '{}', %s, now() - interval '45 minutes')", (rid,))
+        c.execute("INSERT INTO queue (project, key, partition_id, status, payload) VALUES ('slowwin', 'b', 0, 'pending', '{}')")
+    r = client.post(f"/api/v1/runs/{other}/claim", headers=hdr(run_id="2"), json={"project": "slowwin", "limit": 1, "steal": True}).json()
+    assert r["items"] == []                      # 'a' is 45 minutes old but its runner is alive: still busy, cap 1 reached, nothing stolen
+    with db.conn() as c:
+        c.execute("UPDATE runs SET last_seen = now() - interval '1 hour' WHERE id=%s", (rid,))
+    r = client.post(f"/api/v1/runs/{other}/claim", headers=hdr(run_id="2"), json={"project": "slowwin", "limit": 1, "steal": True}).json()
+    assert len(r["items"]) == 1                  # its runner went silent: the window is free again
