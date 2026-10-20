@@ -18,10 +18,29 @@
 .cost .track{height:12px;position:relative;background:var(--bar);border-radius:3px}.cost .track i{position:absolute;left:0;top:0;bottom:0;border-radius:3px}
 .big{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin-bottom:12px}.big div{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel2)}
 .big b{display:block;font-size:20px}.big span{font-size:11px;color:var(--dim)}
+.wall{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr));gap:8px 18px;margin-top:6px}
+.g{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 8px;align-items:center;cursor:pointer;padding:4px 6px;border-radius:8px}
+.g:hover{background:var(--panel2)}.g .gn{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.g .gv{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;white-space:nowrap}
+.g .cap{grid-column:1/-1;height:10px;border-radius:6px;background:var(--bar);position:relative;overflow:visible}
+.g .cap .lim{position:absolute;left:0;top:0;bottom:0;border-radius:6px;background:color-mix(in srgb,var(--s1) 22%,transparent);transition:width .8s ease}
+.g .cap .on{position:absolute;left:0;top:0;bottom:0;border-radius:6px;background:var(--s1);transition:width .8s ease,background .3s}
+.g.full .cap .on{background:var(--ok);box-shadow:0 0 10px color-mix(in srgb,var(--ok) 60%,transparent)}
+.g.held .cap .on{background:var(--warn)}.g.down .cap .on{background:var(--bad);width:100%!important;opacity:.35;animation:throb 1.6s infinite}
+.g.done{opacity:.5}.g.done .cap .on{width:100%!important;background:var(--accent);opacity:.35}.g.done .cap .lim,.g.done .cap .fell{display:none}.g .cap .fell{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--bad);border-radius:1px}
+@keyframes throb{50%{opacity:.85}}
+.wallkey{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--dim);margin-top:10px}.wallkey i{display:inline-block;width:18px;height:8px;border-radius:4px;vertical-align:0;margin-right:5px}
+.hero{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin-bottom:14px}.hero div{border:1px solid var(--line);border-radius:10px;padding:10px 12px;background:var(--panel2)}
+.hero b{display:block;font-size:26px;line-height:1.1}.hero span{font-size:11px;color:var(--dim)}
+.heat{position:relative;overflow-x:auto}.heat svg{min-width:720px}
+@media (prefers-reduced-motion:reduce){.g .cap .on,.g .cap .lim{transition:none}.g.down .cap .on{animation:none}}
 @media (max-width:700px){.cost .lr .n .dim{display:none}header .sp{display:none}header>span.dim{flex:1 1 100%;font-size:11px}.cost .lr{grid-template-columns:90px minmax(0,1fr) 92px}.feed li{grid-template-columns:60px 14px minmax(0,1fr)}}
 </style></head><body>
 <header><h1>THROTTLE</h1><!--NAV--><span class="sp"></span><div class="seg" id="range" role="group" aria-label="time range"></div><span class="dim" id="updated">loading</span></header>
 <main>
+<section><div class="head"><div><h2>Every portal, live</h2><p class="lede">The bright bar is the searches we have open on the portal now; the faint track behind it is as far as the throttle will let it go (its limit, out of 40); a red notch is where it fell over before. Click one for its story.</p></div></div>
+<div class="hero" id="hero"></div><div class="wall" id="wall"></div>
+<div class="wallkey"><span><i style="background:var(--ok);box-shadow:0 0 8px var(--ok)"></i>at its limit: going as hard as it safely can</span><span><i style="background:var(--warn)"></i>held below its limit (slow answers)</span><span><i style="background:var(--bad)"></i>down: everything holds</span><span><i style="background:color-mix(in srgb,var(--s1) 22%,transparent)"></i>room up to its limit</span><span><i style="background:var(--bad);width:2px"></i>fell over here before</span></div></section>
+
 <section><h2>What the throttle does</h2>
 <p class="lede">The runners never decide how hard to hit a portal; the hub does, once a minute, for each portal separately.</p>
 <div class="explain">
@@ -46,6 +65,9 @@
 <section class="cost"><div class="head"><div><h2>Is it costing us speed?</h2><p class="lede">Estimates. "At its limit" scales each portal's current tenders per search up to its limit; outage losses use its average rate over the last hour.</p></div></div>
 <div class="big" id="costbig"></div><div id="costbars"></div></section>
 </div>
+<section><div class="head"><div><h2>The night at a glance</h2><p class="lede">One row per portal, one column per 10 minutes (left = oldest, right = now). The brighter the cell, the more searches we were allowed to keep open; red means the portal was not answering. Hover a cell for the numbers.</p></div></div>
+<div class="heat chart" id="heat"></div>
+<div class="wallkey"><span>searches allowed</span><span><i style="background:var(--q1)"></i>few</span><span><i style="background:var(--q3)"></i></span><span><i style="background:var(--q6)"></i>40</span><span><i style="background:var(--bad)"></i>portal down</span><span><i style="background:var(--bar)"></i>no data yet</span></div></section>
 </main>
 <script src="/assets/charts.js"></script>
 <script>
@@ -165,12 +187,49 @@ function cost(){
   <span class="track"><i style="width:${r.at/mx*100}%;background:var(--q2)"></i><i style="width:${r.rate/mx*100}%;background:var(--s1)"></i></span><span class="n">${fmt(Math.round(r.rate))} <span class="dim">of ~${fmt(Math.round(r.at))}/min</span></span></div>`).join("")+
   `<div class="lg"><span><i style="background:var(--s1)"></i>now</span><span><i style="background:var(--q2)"></i>at its limit (estimate)</span></div>`}
 
+
+function wall(){
+ const G=D.sources.filter(s=>s.family==="gepnic").map(s=>({s,st:state(s),x:live(s)}));
+ const rank={down:0,held:1,full:2,done:3};G.sort((a,b)=>rank[a.st[0]]-rank[b.st[0]]||(b.s.now.windows||0)-(a.s.now.windows||0));
+ const act=G.filter(g=>g.st[0]!=="done"),open=act.reduce((a,g)=>a+(g.s.now.windows||0),0),room=act.reduce((a,g)=>a+(g.s.now.cap||0),0);
+ const n=k=>G.filter(g=>g.st[0]===k).length,rate=act.reduce((a,g)=>a+(g.x?g.x.rate_10m:0),0);
+ $("hero").innerHTML=`<div><b>${fmt(open)}</b><span>searches open across ${act.length} portals, of ${fmt(room)} allowed</span></div><div><b class="ok">${n("full")}</b><span>portals at their limit</span></div>
+  <div><b class="${n("held")?"warn":""}">${n("held")}</b><span>held below it</span></div><div><b class="${n("down")?"bad":""}">${n("down")}</b><span>down right now</span></div><div><b>${fmt(Math.round(rate))}</b><span>tenders a minute</span></div>`;
+ const existing=new Map([...$("wall").children].map(e=>[e.dataset.k,e]));
+ if(existing.size!==G.length)$("wall").innerHTML=G.map(g=>`<div class="g" data-k="${esc(key(g.s))}"><span class="gn"></span><span class="gv"></span><div class="cap"><i class="lim"></i><i class="on"></i></div></div>`).join("");
+ const els=new Map([...$("wall").children].map(e=>[e.dataset.k,e]));
+ G.forEach(g=>{const e=els.get(key(g.s));if(!e)return;$("wall").appendChild(e);const w=g.s.now.windows||0,c=g.s.now.cap||0,f=g.s.now.fell_at;
+  e.className="g "+g.st[0];e.querySelector(".gn").textContent=title(g.s);
+  e.querySelector(".gv").textContent=g.st[0]==="down"?"down":g.st[0]==="done"?g.st[1]:`${w} / ${c}${g.x&&g.x.rate_10m?` · ${fmt(Math.round(g.x.rate_10m))}/min`:""}`;
+  e.querySelector(".lim").style.width=Math.min(100,c/40*100)+"%";e.querySelector(".on").style.width=Math.min(100,w/40*100)+"%";
+  let fe=e.querySelector(".fell");if(f&&f<=40){if(!fe){fe=document.createElement("i");fe.className="fell";e.querySelector(".cap").appendChild(fe)}fe.style.left=`calc(${f/40*100}% - 1px)`}else if(fe)fe.remove();
+  e.title=`${title(g.s)}: ${why(g.s)}`})}
+$("wall").addEventListener("click",e=>{const g=e.target.closest(".g");if(!g)return;PICK=g.dataset.k;store("pick",PICK);detail();$("detail").scrollIntoView({behavior:"smooth"})});
+
+function at(s,t){let w=s.start?s.start.windows:null,th=s.start?s.start.threads:null,sr=null;for(const p of s.steps){if(p[0]>t)break;w=p[1];th=p[2];sr=p[4]}return {w,th,sr}}
+const downAt=(s,a,b)=>s.outages.some(o=>o[0]<b&&o[1]>a);
+function heat(){
+ const S=D.sources.filter(s=>s.family==="gepnic"&&(s.steps.length||s.outages.length)).sort((a,b)=>Math.max(0,...b.steps.map(p=>p[1]))-Math.max(0,...a.steps.map(p=>p[1])));
+ const first=Math.min(...S.flatMap(s=>s.steps.map(p=>p[0]).concat(s.outages.map(o=>o[0]))),D.now-3600);
+ const el=$("heat"),W=Math.max(720,el.clientWidth),L=150,R=8,T=20,rh=14,H=T+S.length*rh+4,t0=Math.max(D.since,first),t1=D.now;
+ const slice=RANGES[RANGE]<=6?300:600,n=Math.ceil((t1-t0)/slice),cw=(W-L-R)/n,ramp=["--q1","--q2","--q3","--q4","--q5","--q6"];
+ const col=w=>w==null?"var(--bar)":`var(${ramp[Math.min(5,Math.floor(Math.min(40,Math.max(1,w))/40*5.99))]})`;
+ const g=[`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="searches allowed per portal over time">`];
+ for(let k=0;k<=6;k++){const t=t0+(t1-t0)*k/6;g.push(`<text x="${L+(W-L-R)*k/6}" y="12" text-anchor="${k===0?"start":k===6?"end":"middle"}" class="ax">${k===6?"now":clock(t)}</text>`)}
+ S.forEach((s,ri)=>{const y=T+ri*rh;g.push(`<text x="${L-8}" y="${y+rh/2+3.5}" text-anchor="end" class="ax" style="fill:var(--text)">${esc(title(s).slice(0,20))}</text>`);
+  for(let i=0;i<n;i++){const a=t0+i*slice,b=a+slice,v=at(s,b).w,dn=downAt(s,a,b);g.push(`<rect data-r="${ri}" data-i="${i}" x="${(L+i*cw).toFixed(1)}" y="${y+1}" width="${Math.max(.5,cw-.7).toFixed(1)}" height="${rh-2}" rx="1.5" fill="${dn?"var(--bad)":col(v)}"/>`)}});
+ el.innerHTML=g.join("")+"</svg>";
+ const svg=el.querySelector("svg"),tp=Hub.tip(el);
+ svg.addEventListener("pointermove",ev=>{const r=ev.target.closest("rect[data-r]");if(!r)return tp.hide();const s=S[+r.dataset.r],a=t0+(+r.dataset.i)*slice,b=a+slice,v=at(s,b),rc=svg.getBoundingClientRect();
+  tp.show(ev.clientX-rc.left,ev.clientY-rc.top,`${title(s)} · ${clock(a)}–${clock(b)}`,downAt(s,a,b)?[{color:"var(--bad)",value:"down",label:"not answering"}]:[{value:v.w??"-",label:"searches allowed"},{value:v.th??"-",label:"threads each"},{value:capAt(s,b)??"-",label:"limit"}].concat(v.sr!=null?[{value:v.sr+" s",label:"answer time"}]:[]))});
+ svg.addEventListener("pointerleave",()=>tp.hide());
+ svg.addEventListener("click",ev=>{const r=ev.target.closest("rect[data-r]");if(!r)return;PICK=key(S[+r.dataset.r]);store("pick",PICK);detail();$("detail").scrollIntoView({behavior:"smooth"})})}
 async function tick(){
  try{[D,SC,TP]=await Promise.all([j("/api/throttle?hours="+RANGES[RANGE]),j("/api/scrapes"),j("/api/throughput?minutes="+Math.min(1440,RANGES[RANGE]*60)+"&bucket="+(RANGES[RANGE]<=6?5:15))]);
-  nowTable();detail();feed();cost();$("updated").textContent="updated "+new Date().toLocaleTimeString()}
+  wall();nowTable();detail();feed();cost();heat();$("updated").textContent="updated "+new Date().toLocaleTimeString()}
  catch(e){if(e!==0)$("updated").textContent="update failed, retrying"}}
 seg($("range"),Object.keys(RANGES).map(k=>[k,k]),RANGE,"range",k=>{RANGE=k;tick()});
 seg($("feedf"),[["incidents","Falls and chokes"],["all","Everything"]],FEEDF,"feedf",k=>{FEEDF=k;if(D)feed()});
-let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D)detail()},150)});
+let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D){detail();heat()}},150)});
 tick();setInterval(tick,60000);
 </script></body></html>
