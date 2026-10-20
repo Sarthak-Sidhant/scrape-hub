@@ -115,6 +115,10 @@ def adapt_speeds(c, now=None):
             wide = nic_wide_outage(c)
             if wide >= NIC_WIDE_PORTALS:
                 windows = 0
+            # going down within 10 minutes of a choke is the same incident: the choke already set the limit from the real level (the
+            # windows open now are lower only because it was being halved; 2026-10-21 Kerala choked at 38, went down at 19)
+            if ad.get("fell_at_t") and now.timestamp() - float(ad["fell_at_t"]) < 600:
+                windows = 0
             if windows >= 8 and windows * 0.7 < cap:
                 learned = max(4, int(windows * 0.7))
                 c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (learned, p["name"]))
