@@ -961,7 +961,7 @@ def test_a_fast_portal_at_its_ceiling_earns_a_higher_one(client, clean):
     for m in range(1, 10):
         assert st["adaptive"]["max_windows"] == 32
         st = _adapt_once("fast", None, 200, 100, m)
-    assert st["adaptive"]["max_windows"] == 34 and st["adaptive"]["healthy_min"] == 0     # 10 healthy minutes: +2
+    assert st["adaptive"]["max_windows"] == 36 and st["adaptive"]["healthy_min"] == 0     # 10 healthy minutes at 0.5 s: +4
     st = _adapt_once("fast", {**st, "max_claimed": CAP_CEILING, "adaptive": {"max_windows": CAP_CEILING, "healthy_min": 9}}, 200, 100, 20)
     assert st["adaptive"]["max_windows"] == CAP_CEILING                          # never above the ceiling
 
@@ -1014,7 +1014,9 @@ def test_a_portal_is_not_raised_back_to_where_it_fell(client, clean):
     st = _adapt_once("wall", {"threads": 16, "max_claimed": 28, "adaptive": {"max_windows": 28, "fell_at": 30, "healthy_min": 9}}, 200, 100, 0)
     assert st["adaptive"]["max_windows"] == 28                     # roof is 30 - 2 = 28: no raise
     st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "healthy_min": 9}}, 200, 100, 1)
-    assert st["adaptive"]["max_windows"] == 26
+    assert st["adaptive"]["max_windows"] == 28                     # +4 at 0.5 s, still under the roof of 28
+    st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "healthy_min": 9}}, 200, 300, 2)
+    assert st["adaptive"]["max_windows"] == 26                     # +2 at 1.5 s
 
 
 def test_throttle_history_gives_steps_caps_and_events(client, clean, login):

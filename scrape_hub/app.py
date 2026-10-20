@@ -134,7 +134,7 @@ def adapt_speeds(c, now=None):
                          VALUES (%s,%s,%s,%s,%s,%s,%s)""", (p["name"], threads, threads, windows, windows, phase,
                                                              f"choked at {windows} windows ({why.split(': ', 1)[-1]}): window cap {cap} -> {learned}"))
             cap = learned
-        # A portal that sits at its ceiling and stays fast earns a higher one: +2 windows after 10 healthy minutes in a row, up to
+        # A portal that sits at its ceiling and stays fast earns a higher one: +2 windows (+4 under 1 s) after 10 healthy minutes, up to
         # CAP_CEILING. If that turns out to be too much, the choke and outage rules above take it back down and remember the level.
         target = float({**PHASES[phase], **(ad.get(phase) or {})}["target_s"])
         healthy = (sec is not None and sec < 0.6 * target and (e / n if n else 0.0) < 0.01 and fail_frac < 0.05
@@ -143,7 +143,7 @@ def adapt_speeds(c, now=None):
         # never climb back to a level where this portal went down or choked before: stop 2 windows short of the lowest such level
         roof = min(CAP_CEILING, int(ad["fell_at"]) - 2) if ad.get("fell_at") else CAP_CEILING
         if streak >= 10 and cap < roof:
-            raised = min(roof, cap + 2)
+            raised = min(roof, cap + (4 if sec < 1.0 else 2))       # a portal answering in under a second climbs faster
             c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (raised, p["name"]))
             c.execute("""INSERT INTO adjustments (project, s_per_req, requests, errors, threads_from, threads_to, claimed_from, claimed_to, phase, failed_frac, reason)
                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (p["name"], sec, int(n), int(e), threads, nt, windows, nw, phase, fail_frac,
