@@ -12,6 +12,25 @@
 .ctrl{display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin:4px 0 12px}.ctrl .lab{font-size:11px;color:var(--dim);letter-spacing:.08em;text-transform:uppercase}
 .lgx{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;margin-top:8px;align-items:center}.lgx i{display:inline-block;width:14px;height:10px;border-radius:2px;vertical-align:-1px;margin-right:5px}
 .ramp{display:inline-flex;gap:1px;vertical-align:middle}.ramp i{width:16px;height:10px;margin:0;border-radius:1px}
+.show{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start}
+@media (max-width:1000px){.show{grid-template-columns:1fr}}
+.dial{position:relative;max-width:640px;margin:0 auto}.dial svg{width:100%;height:auto}
+.dial .ctr{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;text-align:center}
+.dial .ctr div{max-width:30%}.dial .ctr b{display:block;font-size:clamp(16px,2.4vw,26px);line-height:1.1}.dial .ctr span{font-size:11px;color:var(--dim)}
+.rp-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.rp-top button.play{font:inherit;font-weight:700;font-size:13px;padding:5px 14px;border-radius:8px;border:1px solid var(--accent);background:var(--accent);color:var(--bg);cursor:pointer;min-width:84px}
+.rp-top input[type=range]{flex:1;min-width:160px;accent-color:var(--accent)}
+.rp-clock{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;margin:8px 0 2px}.rp-clock small{font-size:12px;color:var(--dim);font-weight:400;margin-left:8px}
+.race{position:relative;margin-top:8px}
+.race .r{position:absolute;left:0;right:0;height:18px;display:grid;grid-template-columns:118px minmax(0,1fr) 62px;gap:8px;align-items:center;font-size:11px;transition:top .45s ease}
+.race .r .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}.race .r .v{font-variant-numeric:tabular-nums;color:var(--dim)}
+.race .r .tr{height:12px;background:var(--bar);border-radius:3px;position:relative;overflow:hidden}
+.race .r .tr i{position:absolute;left:0;top:0;bottom:0;border-radius:3px;background:var(--s1);transition:width .35s ease,background .2s}
+.race .r .tr i.down{background:var(--bad)}.race .r .tr em{position:absolute;top:0;bottom:0;width:2px;background:var(--dim);opacity:.7;transition:left .35s ease}
+.race .r.flash-down .nm{color:var(--bad);font-weight:700}.race .r.flash-choke .nm{color:var(--warn);font-weight:700}.race .r.flash-raise .nm{color:var(--ok);font-weight:700}
+.ticker{list-style:none;margin:10px 0 0;padding:0;font-size:12px;min-height:126px}.ticker li{padding:2px 0;border-top:1px solid var(--line);display:flex;gap:8px}.ticker li:first-child{border-top:0}
+.ticker time{color:var(--dim);flex:none;font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion:reduce){.race .r,.race .r .tr i,.race .r .tr em{transition:none}}
 </style></head><body>
 <header><h1>THROTTLE</h1><!--NAV--><span class="sp"></span><span class="dim" id="updated">loading</span></header>
 <main>
@@ -20,6 +39,15 @@
 <div class="seg" id="range" role="group" aria-label="time range"></div></div>
 <div class="stats" id="stats"></div></section>
 
+
+<div class="show">
+<section><div class="head"><div><h2>The 24-hour dial</h2><p class="lede">Every portal is a ring, biggest on the outside; time runs clockwise from the gap at the top. Brighter means more windows allowed, red means the portal was not answering, and the marks are its falls, chokes and raises. Hover anywhere on a ring.</p></div></div>
+<div class="dial chart" id="dial"></div></section>
+<section><div class="head"><div><h2>Replay</h2><p class="lede">Play the throttle back: each bar is the windows allowed on a portal at that moment (the tick is its ceiling), re-sorted as it moves, with every notable decision as it happened.</p></div></div>
+<div class="rp-top"><button class="play" id="play">▶ Play</button><input type="range" id="scrub" min="0" max="1000" value="1000" aria-label="time"><div class="seg" id="speed" role="group" aria-label="replay speed"></div></div>
+<div class="rp-clock" id="clock"></div><div class="chart" id="fleetline"></div>
+<div class="race" id="race"></div><ul class="ticker" id="ticker"></ul></section>
+</div>
 <section><div class="head"><div><h2>The fleet at a glance</h2>
 <p class="lede">One row per portal, one column per time slice. The brighter the cell, the more windows the throttle allowed; red is the portal not answering; a mark on a cell is a decision worth knowing about. Hover for the details.</p></div>
 <div class="seg" id="hsort" role="group" aria-label="sort rows"></div></div>
@@ -118,11 +146,82 @@ $("mults").addEventListener("pointermove",ev=>{const card=ev.target.closest(".m"
   .concat(v.k?[KIND[v.k]+(v.sr!=null?` at ${v.sr} s a request`:"")]:[]).concat(downAt(s,t-60,t+60)?[{color:"var(--bad)",value:"down",label:"not answering"}]:[]).concat(near))});
 $("mults").addEventListener("pointerleave",()=>document.querySelectorAll("#mults .tip").forEach(t=>t.hidden=true));
 
-async function tick(){try{[D,SC]=await Promise.all([j("/api/throttle?hours="+RANGES[RANGE]),j("/api/scrapes")]);stats();heat();mults();$("updated").textContent="updated "+new Date().toLocaleTimeString()}
+
+// ---------------------------------------------------------------- the dial
+const GAP=0.24;      // radians left open at the top for the labels
+function dial(){
+ const S0=D.sources.filter(s=>s.family==="gepnic"&&(s.steps.length||s.events.length||s.outages.length)).sort((a,b)=>peak(a)-peak(b));
+ const el=$("dial"),Z=640,c=Z/2,r0=86,r1=Z/2-48,n=S0.length,rw=(r1-r0)/Math.max(1,n),t0=D.since,t1=D.now;
+ const slice=RANGES[RANGE]<=6?120:RANGES[RANGE]<=24?600:1800,m=Math.ceil((t1-t0)/slice);
+ const ang=t=>-Math.PI/2+GAP/2+(t-t0)/(t1-t0)*(2*Math.PI-GAP),pt=(r,a)=>[c+r*Math.cos(a),c+r*Math.sin(a)];
+ const arc=(ra,rb,a0,a1)=>{const [x0,y0]=pt(rb,a0),[x1,y1]=pt(rb,a1),[x2,y2]=pt(ra,a1),[x3,y3]=pt(ra,a0),lg=a1-a0>Math.PI?1:0;
+  return `M${x0.toFixed(1)},${y0.toFixed(1)}A${rb},${rb} 0 ${lg} 1 ${x1.toFixed(1)},${y1.toFixed(1)}L${x2.toFixed(1)},${y2.toFixed(1)}A${ra},${ra} 0 ${lg} 0 ${x3.toFixed(1)},${y3.toFixed(1)}Z`};
+ const ramp=["--q1","--q2","--q3","--q4","--q5","--q6"],col=w=>w==null||w<=0?"var(--bar)":`var(${ramp[Math.min(5,Math.floor(Math.sqrt(Math.min(40,w)/40)*6))]})`;
+ let g=`<svg viewBox="0 0 ${Z} ${Z}" role="img" aria-label="windows allowed per portal around a ${RANGE} clock">`;
+ // hour ticks
+ const step=RANGES[RANGE]<=6?3600:RANGES[RANGE]<=24?3*3600:12*3600;
+ for(let t=Math.ceil(t0/step)*step;t<t1;t+=step){if(t-t0<(t1-t0)*.04||t1-t<(t1-t0)*.04)continue;const a=ang(t),[x,y]=pt(r1+6,a),[x2,y2]=pt(r1+20,a),[xl,yl]=pt(r1+27,a);
+  g+=`<line x1="${x.toFixed(1)}" y1="${y.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${y2.toFixed(1)}" stroke="var(--dim)"/><text x="${xl.toFixed(1)}" y="${(yl+3).toFixed(1)}" text-anchor="middle" class="ax">${new Date(t*1000).toLocaleTimeString([],{hour:"2-digit"})}</text>`}
+ S0.forEach((s,ri)=>{const ra=r0+ri*rw+.4,rb=r0+(ri+1)*rw-.4;
+  for(let i=0;i<m;i++){const a=t0+i*slice,b=Math.min(t1,a+slice),v=at(s,b);if(v.w==null&&!downAt(s,a,b))continue;
+   g+=`<path d="${arc(ra,rb,ang(a),ang(b)+.002)}" fill="${downAt(s,a,b)?"var(--bad)":col(v.w)}"/>`}
+  s.events.forEach(e=>{if(!["down","choke","raise"].includes(e[1]))return;const [x,y]=pt((ra+rb)/2,ang(e[0]));
+   g+=`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${Math.max(1.6,rw*.42).toFixed(1)}" fill="var(${{down:"--bad",choke:"--warn",raise:"--ok"}[e[1]]})" stroke="var(--panel)" stroke-width="1"/>`})});
+ const [nx,ny]=pt(r0-6,ang(t1)),[ox,oy]=pt(r1+4,ang(t1)),[sx,sy]=pt(r0-6,ang(t0)),[qx,qy]=pt(r1+4,ang(t0));
+ g+=`<line x1="${nx}" y1="${ny}" x2="${ox}" y2="${oy}" stroke="var(--text)" stroke-width="1.5"/><text x="${ox-6}" y="${oy-6}" text-anchor="end" class="ax" style="fill:var(--text);font-weight:700">now</text>`;
+ g+=`<line x1="${sx}" y1="${sy}" x2="${qx}" y2="${qy}" stroke="var(--dim)" stroke-dasharray="2 2"/><text x="${qx+6}" y="${qy-6}" class="ax">${RANGE} ago</text>`;
+ g+=`<circle id="dialhit" cx="${c}" cy="${c}" r="${r1}" fill="transparent"/><path id="dialcur" fill="none" stroke="var(--text)" stroke-width="1.5" d=""/></svg>`;
+ const tot=S0.reduce((a,s)=>a+(s.now.windows||0),0),down=S0.filter(s=>s.outages.some(o=>o[2])).length;
+ const centre=`<div><b>${fmt(tot)}</b><span>windows in flight now across ${n} portals${down?` · ${down} down`:""}</span></div>`;
+ el.innerHTML=g+`<div class="ctr" id="dialctr">${centre}</div>`;
+ const svg=el.querySelector("svg"),cur=$("dialcur");
+ svg.addEventListener("pointermove",ev=>{const r=svg.getBoundingClientRect(),x=(ev.clientX-r.left)*Z/r.width-c,y=(ev.clientY-r.top)*Z/r.height-c,d=Math.hypot(x,y);
+  let a=Math.atan2(y,x);if(a<-Math.PI/2+GAP/2)a+=2*Math.PI;const f=(a+Math.PI/2-GAP/2)/(2*Math.PI-GAP),ri=Math.floor((d-r0)/rw);
+  if(d<r0||d>r1||f<0||f>1||ri<0||ri>=n){cur.setAttribute("d","");$("dialctr").innerHTML=centre;return}
+  const s=S0[ri],t=t0+f*(t1-t0),v=at(s,t),dn=downAt(s,t-60,t+60),ra=r0+ri*rw,rb=ra+rw;
+  cur.setAttribute("d",arc(ra,rb,ang(Math.max(t0,t-slice/2)),ang(Math.min(t1,t+slice/2))));
+  $("dialctr").innerHTML=`<div><b class="${dn?"bad":""}">${dn?"down":v.w==null?"not started":v.w+" window"+(v.w===1?"":"s")}</b><span>${esc(title(s))}<br>${tf(t)}${v.th?` · ${v.th} threads`:""} · cap ${capAt(s,t)??"-"}</span></div>`});
+ svg.addEventListener("pointerleave",()=>{cur.setAttribute("d","");$("dialctr").innerHTML=centre})}
+
+// ---------------------------------------------------------------- replay
+let RT=null,PLAY=null,SPEED=+load("speed","60");
+const RACE_N=18,ROW=21;
+function replaySetup(){
+ const S0=D.sources.filter(s=>s.family==="gepnic"&&s.steps.length).sort((a,b)=>peak(b)-peak(a)).slice(0,RACE_N);
+ $("race").style.height=(S0.length*ROW)+"px";
+ $("race").innerHTML=S0.map((s,i)=>`<div class="r" data-i="${i}" style="top:${i*ROW}px"><span class="nm">${esc(title(s))}</span><span class="tr"><i></i><em></em></span><span class="v"></span></div>`).join("");
+ RT={S:S0,ev:D.sources.flatMap(s=>s.events.filter(e=>["down","choke","raise"].includes(e[1])).map(e=>({t:e[0],k:e[1],s,txt:e[2]}))).sort((a,b)=>a.t-b.t)};
+ // fleet total windows over time, for the line under the clock
+ const n=160,t0=D.since,t1=D.now,ts=Array.from({length:n},(_,i)=>t0+(t1-t0)*i/(n-1)),G=D.sources.filter(s=>s.family==="gepnic");
+ RT.line={ts,vals:ts.map(t=>G.reduce((a,s)=>a+(at(s,t).w||0),0)),down:ts.map(t=>G.filter(s=>downAt(s,t-60,t+60)).length)};
+ const W=600,H=64,mx=Math.max(1,...RT.line.vals);let d="";RT.line.vals.forEach((v,i)=>d+=(i?"L":"M")+(i/(n-1)*W).toFixed(1)+","+(H-4-v/mx*(H-10)).toFixed(1));
+ $("fleetline").innerHTML=`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="height:64px" aria-label="windows in flight across the fleet">${RT.line.down.map((k,i)=>k?`<rect x="${(i/(n-1)*W-2).toFixed(1)}" y="${H-4-Math.min(k,6)*3}" width="3" height="${Math.min(k,6)*3}" fill="var(--bad)" opacity=".7"/>`:"").join("")}<path d="${d}" fill="none" stroke="var(--s1)" stroke-width="1.6" vector-effect="non-scaling-stroke"/><line id="playhead" x1="${W}" x2="${W}" y1="0" y2="${H}" stroke="var(--text)" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+ $("fleetline").onclick=ev=>{const r=ev.currentTarget.getBoundingClientRect();$("scrub").value=Math.round((ev.clientX-r.left)/r.width*1000);frame()};
+ frame()}
+function frame(){
+ if(!RT)return;const f=+$("scrub").value/1000,t=D.since+f*(D.now-D.since),win=(D.now-D.since)/80;
+ $("clock").innerHTML=`${tf(t)}<small>${f>=.999?"now":Math.round((D.now-t)/60)>=90?((D.now-t)/3600).toFixed(1)+" h ago":Math.round((D.now-t)/60)+" min ago"}</small>`;
+ $("playhead")?.setAttribute("x1",f*600);$("playhead")?.setAttribute("x2",f*600);
+ const vals=RT.S.map(s=>({s,v:at(s,t),cap:capAt(s,t),dn:downAt(s,t-60,t+60),ev:RT.ev.filter(e=>e.s===s&&e.t<=t&&e.t>t-win).pop()}));
+ const order=vals.slice().sort((a,b)=>(b.v.w||0)-(a.v.w||0));
+ $("race").querySelectorAll(".r").forEach(row=>{const x=vals[+row.dataset.i],rank=order.indexOf(x);row.style.top=(rank*ROW)+"px";
+  const bar=row.querySelector("i"),tick=row.querySelector("em");bar.style.width=Math.min(100,(x.v.w||0)/40*100)+"%";bar.className=x.dn?"down":"";
+  tick.style.left=Math.min(99.5,(x.cap||0)/40*100)+"%";row.querySelector(".v").textContent=x.dn?"down":x.v.w!=null?`${x.v.w}×${x.v.th}`:"-";
+  row.className="r"+(x.ev?" flash-"+x.ev.k:"")});
+ const recent=RT.ev.filter(e=>e.t<=t).slice(-7).reverse();
+ $("ticker").innerHTML=recent.map(e=>`<li><time>${tf(e.t)}</time><span><span class="mk ${e.k}">${{down:"▼",choke:"◆",raise:"▲"}[e.k]}</span> <b>${esc(title(e.s))}</b> ${esc(e.txt.replace(/^gepnic:\S+ /,""))}</span></li>`).join("")||'<li class="dim">No falls, chokes or raises yet at this point.</li>'}
+function play(){
+ if(PLAY){cancelAnimationFrame(PLAY);PLAY=null;$("play").textContent="▶ Play";return}
+ if(+$("scrub").value>=1000)$("scrub").value=0;$("play").textContent="❚❚ Pause";let last=performance.now();
+ const run=now=>{const dt=(now-last)/1000;last=now;const v=Math.min(1000,+$("scrub").value+dt*1000/SPEED);$("scrub").value=v;frame();
+  if(v>=1000){PLAY=null;$("play").textContent="▶ Play";return}PLAY=requestAnimationFrame(run)};PLAY=requestAnimationFrame(run)}
+$("play").onclick=play;$("scrub").oninput=frame;
+async function tick(){try{[D,SC]=await Promise.all([j("/api/throttle?hours="+RANGES[RANGE]),j("/api/scrapes")]);stats();dial();heat();mults();if(!PLAY){const keep=RT?$("scrub").value:1000;replaySetup();$("scrub").value=keep;frame()}$("updated").textContent="updated "+new Date().toLocaleTimeString()}
  catch(e){if(e!==0)$("updated").textContent="update failed, retrying"}}
 seg($("range"),Object.keys(RANGES).map(k=>[k,k]),RANGE,"range",k=>{RANGE=k;tick()});
 seg($("hsort"),[["peak","Most windows"],["events","Most events"],["down","Most downtime"],["name","Name"]],HSORT,"hsort",k=>{HSORT=k;if(D)heat()});
 seg($("msort"),[["events","Most events"],["peak","Most windows"],["down","Most downtime"],["name","Name"]],MSORT,"msort",k=>{MSORT=k;if(D)mults()});
+seg($("speed"),[["120","slow"],["60","normal"],["20","fast"]],String(SPEED),"speed",k=>{SPEED=+k});
 seg($("mfilt"),[["eventful","With events"],["all","All portals"]],MFILT,"mfilt",k=>{MFILT=k;if(D)mults()});
 let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(D)heat()},150)});
 tick();setInterval(tick,60000);
