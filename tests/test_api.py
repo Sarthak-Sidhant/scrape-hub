@@ -1032,3 +1032,19 @@ def test_throttle_history_gives_steps_caps_and_events(client, clean, login):
     assert [c[1] for c in s["caps"]] == [32, 24] and s["events"][0][1] == "choke"
     assert s["now"] == {"threads": 8, "windows": 12, "cap": 24, "fell_at": 20}
     assert client.get("/throttle").status_code == 200
+
+
+def test_a_few_failed_windows_on_a_fast_portal_do_not_teach_a_lower_limit(client, clean):
+    import datetime
+    from scrape_hub.app import adapt_speeds
+    rid = start(client, project="tiny")
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"threads": 16, "max_claimed": 40, "adaptive": {"max_windows": 40}}' WHERE name='tiny'""")
+        c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,'tiny','n_http',200), (%s,'tiny','t_http_s',160)", (rid, rid))
+        for i in range(4):
+            c.execute("INSERT INTO queue (project, key, partition_id, status, payload, claimed_at, done_at) VALUES ('tiny', %s, 0, 'done', '{}', now(), now())", (f"d{i}",))
+        c.execute("INSERT INTO queue (project, key, partition_id, status, payload, claimed_at) VALUES ('tiny', 'f0', 0, 'failed', '{}', now())")
+    with db.conn() as c:
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 11, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
+        st = c.execute("SELECT settings FROM projects WHERE name='tiny'").fetchone()["settings"]
+    assert st["max_claimed"] == 40 and st["adaptive"]["max_windows"] == 40 and "fell_at" not in st["adaptive"]     # 1 of 5 failed: noise

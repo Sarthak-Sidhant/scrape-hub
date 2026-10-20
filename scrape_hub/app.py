@@ -114,11 +114,16 @@ def adapt_speeds(c, now=None):
         n, t, e = float(m["n"]), float(m["t"]), float(m["e"])
         f, d = int(q["f"]), int(q["d"])
         sec = t / n if n >= 30 else None
-        fail_frac = f / (f + d) if f + d >= 5 else 0.0
+        # failing windows count only with real evidence: late in a crawl many windows hold 1-5 tenders, and one tender page hitting a
+        # "session expired" fails its whole window, so "1 of 5 failed" on a fast portal is noise (2026-10-20: it halved Assam, Coal India,
+        # Rajasthan and Uttarakhand while they answered in under a second)
+        fail_frac = f / (f + d) if f + d >= 10 and f >= 3 else 0.0
         threads, windows = int(st.get("threads", 4)), int(st.get("max_claimed") or max(1, int(ad.get("max_windows", 24)) // 2))
         nt, nw, why = adapt_step(phase, ad, threads, windows, sec, e / n if n else 0.0, fail_frac)
         cap = int(ad.get("max_windows", 24))
-        if why.endswith(": halve") and windows >= 8 and windows >= 0.75 * cap and int(windows * 0.8) < cap:
+        overloaded = sec is not None and (sec > 2 * float({**PHASES[phase], **(ad.get(phase) or {})}["target_s"]) or (e / n if n else 0.0) > 0.05)
+        # only real overload (slow answers or dropped connections) teaches a lower limit; failing windows alone just halve for now
+        if why.endswith(": halve") and overloaded and windows >= 8 and windows >= 0.75 * cap and int(windows * 0.8) < cap:
             # it choked at (or near) its ceiling without going down (e.g. West Bengal at 32 windows: 4 s per request, 10% dropped): that level
             # is too much, so the ceiling becomes 80% of it (never below 8). Only near the ceiling: a slow minute far below it says nothing
             # about the ceiling (2026-10-20: learning from any halve ratcheted a dozen healthy portals down to 8-12 in an hour).
