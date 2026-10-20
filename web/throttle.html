@@ -47,7 +47,7 @@
 <div><b>Searches open ("windows")</b>How many search sessions our runners may keep open on the portal at once. This is the load that knocks portals over, so it is the main dial.</div>
 <div><b>Limit</b>The most searches the throttle will ever allow on that portal. It starts at 32 (6 for the small PSU portals) and moves up to 40 or down as the portal shows what it can take.</div>
 <div><b>Every minute</b>Answers under 2.1 s: allow more. 3-6 s: allow a little less. Over 6 s or many dropped connections: halve. Portal not answering: hold everything, then restart from 1.</div>
-<div><b>Learning</b>Falls over: limit cut to 70% of where it fell. Chokes near the limit: cut to 80%. Fast at its limit for 10 minutes: +2 (+4 when answering in under a second). It never climbs back to a level where it fell before.</div>
+<div><b>Learning</b>Falls over: limit cut to 70% of where it fell. Chokes near the limit: cut to 80%. Fast at its limit for 10 minutes: +2 (+4 when answering in under a second). For 3 hours after a fall it is not raised back to that level; after that it may try again.</div>
 </div></section>
 
 <section><div class="head"><div><h2>Each portal right now</h2><p class="lede">Held-back portals first. "Why" is the throttle's own reason for the limit. Click a row to see that portal in detail below.</p></div></div>
