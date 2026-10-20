@@ -1011,12 +1011,16 @@ def test_storage_samples_sizes_rolls_up_uploads_and_reports(client, clean, login
 
 def test_a_portal_is_not_raised_back_to_where_it_fell(client, clean):
     start(client, project="wall")
-    st = _adapt_once("wall", {"threads": 16, "max_claimed": 28, "adaptive": {"max_windows": 28, "fell_at": 30, "healthy_min": 9}}, 200, 100, 0)
+    import time as _t
+    now = _t.time()
+    st = _adapt_once("wall", {"threads": 16, "max_claimed": 28, "adaptive": {"max_windows": 28, "fell_at": 30, "fell_at_t": now, "healthy_min": 9}}, 200, 100, 0)
     assert st["adaptive"]["max_windows"] == 28                     # roof is 30 - 2 = 28: no raise
-    st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "healthy_min": 9}}, 200, 100, 1)
+    st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "fell_at_t": now, "healthy_min": 9}}, 200, 100, 1)
     assert st["adaptive"]["max_windows"] == 28                     # +4 at 0.5 s, still under the roof of 28
-    st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "healthy_min": 9}}, 200, 300, 2)
-    assert st["adaptive"]["max_windows"] == 26                     # +2 at 1.5 s
+    st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "fell_at_t": now, "healthy_min": 9}}, 200, 300, 2)
+    assert st["adaptive"]["max_windows"] == 26
+    st = _adapt_once("wall", {"threads": 16, "max_claimed": 28, "adaptive": {"max_windows": 28, "fell_at": 30, "fell_at_t": now - 4 * 3600, "healthy_min": 9}}, 200, 100, 3)
+    assert st["adaptive"]["max_windows"] == 32                     # the fall was 4 hours ago: the roof no longer applies
 
 
 def test_throttle_history_gives_steps_caps_and_events(client, clean, login):

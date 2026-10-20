@@ -29,6 +29,7 @@ WEB = Path(__file__).resolve().parent.parent / "web"
 # failing searches and outages are what hold a portal back, not the clock. Per-project overrides (settings.adaptive.<band>) still work.
 _HAMMER = {"target_s": 3.0, "up": (2, 4), "down": (1, 2), "threads": 16, "windows": 1.0}
 PHASES = {"peak": dict(_HAMMER), "shoulder": dict(_HAMMER), "day": dict(_HAMMER)}
+FELL_MEMORY_S = 3 * 3600   # how long a portal's fall level keeps raises below it
 CAP_CEILING = 40      # the highest window cap the throttle raises a healthy portal to (big state portals fell over at 44-48, 2026-10-19)
 
 
@@ -65,8 +66,10 @@ def adapt_step(phase, ad, threads, windows, sec, err_frac, fail_frac):
 def remember_fall(c, name, ad, windows):
     """Note the lowest number of windows at which this portal went down or choked (settings.adaptive.fell_at); the raise rule stays
     below it, so a portal is not walked back into the same wall (2026-10-20: BHEL fell at 34, was raised from 23 back to 33, fell again)."""
-    fell = min(int(ad.get("fell_at") or 10**6), int(windows))
-    c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,fell_at}', to_jsonb(%s::int)) WHERE name=%s", (fell, name))
+    fresh = time.time() - float(ad.get("fell_at_t") or 0) < FELL_MEMORY_S
+    fell = min(int(ad["fell_at"]), int(windows)) if fresh and ad.get("fell_at") else int(windows)
+    c.execute("""UPDATE projects SET settings = jsonb_set(jsonb_set(settings, '{adaptive,fell_at}', to_jsonb(%s::int)), '{adaptive,fell_at_t}', to_jsonb(%s::float8))
+                 WHERE name=%s""", (fell, time.time(), name))
 
 
 def adapt_speeds(c, now=None):
@@ -141,7 +144,9 @@ def adapt_speeds(c, now=None):
                    and windows >= cap and nw >= cap)
         streak = int(ad.get("healthy_min", 0)) + 1 if healthy else 0
         # never climb back to a level where this portal went down or choked before: stop 2 windows short of the lowest such level
-        roof = min(CAP_CEILING, int(ad["fell_at"]) - 2) if ad.get("fell_at") else CAP_CEILING
+        # ...for FELL_MEMORY_S after the fall: one bad moment (a 17:00 bid-deadline rush) must not cap a portal for the rest of the crawl
+        fell_fresh = ad.get("fell_at") and time.time() - float(ad.get("fell_at_t") or 0) < FELL_MEMORY_S
+        roof = min(CAP_CEILING, int(ad["fell_at"]) - 2) if fell_fresh else CAP_CEILING
         if streak >= 10 and cap < roof:
             raised = min(roof, cap + (4 if sec < 1.0 else 2))       # a portal answering in under a second climbs faster
             c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (raised, p["name"]))
