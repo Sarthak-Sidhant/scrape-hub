@@ -12,7 +12,7 @@ from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from pydantic import BaseModel, Field
 
-from . import config, dash_auth, db, fleet, health, metabase, scrapes, storage
+from . import bundles, config, dash_auth, db, fleet, health, metabase, scrapes, storage
 from .auth import Caller, caller, client_ip
 
 def _iso(v):
@@ -928,7 +928,7 @@ def need_login(request: Request):
         raise HTTPException(401, "login required")
 
 
-NAV = [("/", "Overview"), ("/portals", "Portals"), ("/throttle", "Throttle"), ("/data", "Data"), ("/runs", "Runs"), ("/explore", "Rate explorer"), ("/tender", "Tender lookup")]
+NAV = [("/", "Overview"), ("/portals", "Portals"), ("/throttle", "Throttle"), ("/data", "Data"), ("/runs", "Runs"), ("/explore", "Rate explorer"), ("/tender", "Tender lookup"), ("/bundle", "Bundles")]
 
 
 def page(name: str, current: str = "") -> str:
@@ -1686,3 +1686,207 @@ def showcase_api(project: str = "eprocure-tenders"):
     if not row:
         raise HTTPException(404, "not built yet: run scripts/build_showcase.py")
     return JSONResponse(json.loads(json.dumps({"project": project, "built_at": row["built_at"], **row["data"]}, default=_iso)))
+
+
+# ----------------------------------------------------------------------------- tender bundles (scrape_hub/bundles.py)
+# /bundle is our page (dashboard login); /bundle/<slug>.zip is public and asks for that bundle's own password, which opens only that zip.
+# Every answer under /bundle says no-store: Cloudflare caches .zip paths by default, and a cached password page or redirect would leak.
+
+NO_STORE = {"Cache-Control": "no-store, private", "X-Robots-Tag": "noindex, nofollow", "Referrer-Policy": "no-referrer"}
+ZIP_NAME = re.compile(r"^([a-z0-9][a-z0-9-]{1,62})\.zip$")
+
+
+class BundleIn(BaseModel):
+    slug: str = Field(min_length=2, max_length=67)
+    tenders: str = Field(max_length=1_000_000)
+    title: str = Field(default="", max_length=200)
+    note: str = Field(default="", max_length=4000)
+    public_note: str = Field(default="", max_length=2000)
+    include: dict = {}
+    password: str = Field(default="", max_length=200)
+    public: bool = True
+
+
+class BundleEdit(BaseModel):
+    title: Optional[str] = Field(default=None, max_length=200)
+    note: Optional[str] = Field(default=None, max_length=4000)
+    public_note: Optional[str] = Field(default=None, max_length=2000)
+    tenders: Optional[str] = Field(default=None, max_length=1_000_000)
+    include: Optional[dict] = None
+    public: Optional[bool] = None
+
+
+class BundlePassword(BaseModel):
+    password: str = Field(default="", max_length=200)
+    generate: bool = False
+
+
+class TenderText(BaseModel):
+    tenders: str = Field(max_length=1_000_000)
+
+
+def bundle_json(b):
+    return json.loads(json.dumps(b, default=_iso))
+
+
+@app.get("/bundle", response_class=HTMLResponse)
+def bundles_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", 303)
+    return HTMLResponse(page("bundles.html", "/bundle"), headers=NO_STORE)
+
+
+@app.get("/api/bundles", dependencies=[Depends(need_login)])
+def bundles_list():
+    with db.conn() as c:
+        rows = bundles.list_all(c)
+    for r in rows:
+        r.pop("tenders", None)
+    return JSONResponse(bundle_json({"bundles": rows}), headers=NO_STORE)
+
+
+@app.post("/api/bundles/preview", dependencies=[Depends(need_login)])
+def bundles_preview(body: TenderText):
+    entries = bundles.parse_tenders(body.tenders)
+    if len(entries) > bundles.MAX_TENDERS:
+        raise HTTPException(422, f"{len(entries)} tenders; at most {bundles.MAX_TENDERS} per bundle")
+    with db.conn() as c:
+        return JSONResponse(bundle_json({"entries": entries, **bundles.preview(c, entries)}), headers=NO_STORE)
+
+
+@app.post("/api/bundles", dependencies=[Depends(need_login)])
+def bundles_create(body: BundleIn):
+    try:
+        with db.conn() as c:
+            b = bundles.create(c, body.slug, body.tenders, body.title, body.note, body.public_note, body.include, body.password,
+                               body.public, created_by="dashboard")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return JSONResponse(bundle_json(b), headers=NO_STORE)
+
+
+@app.get("/api/bundles/{slug}", dependencies=[Depends(need_login)])
+def bundles_get(slug: str):
+    with db.conn() as c:
+        b = bundles.get(c, slug)
+    if not b:
+        raise HTTPException(404, "no such bundle")
+    return JSONResponse(bundle_json(b), headers=NO_STORE)
+
+
+@app.post("/api/bundles/{slug}", dependencies=[Depends(need_login)])
+def bundles_edit(slug: str, body: BundleEdit):
+    try:
+        with db.conn() as c:
+            b = bundles.update(c, slug, body.title, body.note, body.public_note, body.tenders, body.include, body.public)
+    except KeyError:
+        raise HTTPException(404, "no such bundle")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    return JSONResponse(bundle_json(b), headers=NO_STORE)
+
+
+@app.post("/api/bundles/{slug}/password", dependencies=[Depends(need_login)])
+def bundles_password(slug: str, body: BundlePassword):
+    """Set (or with an empty password, remove) the bundle's password. generate=true makes one up and returns it, once."""
+    pw = bundles.new_password() if body.generate else body.password
+    if pw and len(pw) < 6:
+        raise HTTPException(422, "use at least 6 characters")
+    with db.conn() as c:
+        if not bundles.get(c, slug):
+            raise HTTPException(404, "no such bundle")
+        bundles.set_password(c, slug, pw)
+    return JSONResponse({"ok": True, "password": pw if body.generate else None, "has_password": bool(pw)}, headers=NO_STORE)
+
+
+@app.post("/api/bundles/{slug}/rebuild", dependencies=[Depends(need_login)])
+def bundles_rebuild(slug: str):
+    with db.conn() as c:
+        if not bundles.get(c, slug):
+            raise HTTPException(404, "no such bundle")
+        bundles.queue_rebuild(c, slug)
+    return JSONResponse({"ok": True}, headers=NO_STORE)
+
+
+@app.delete("/api/bundles/{slug}", dependencies=[Depends(need_login)])
+def bundles_delete(slug: str):
+    """Deletes the row and the zip in object storage; the public link stops working at once."""
+    with db.conn() as c:
+        b = bundles.get(c, slug)
+        if not b:
+            raise HTTPException(404, "no such bundle")
+        if b["object_key"] and store_ready("r2"):
+            client, bucket = s3_client("r2")
+            client.delete_object(Bucket=bucket, Key=b["object_key"])
+        c.execute("DELETE FROM bundles WHERE slug=%s", (slug,))
+        c.execute("DELETE FROM bundle_attempts WHERE slug=%s", (slug,))
+    return JSONResponse({"ok": True}, headers=NO_STORE)
+
+
+@app.get("/api/bundles/{slug}/download", dependencies=[Depends(need_login)])
+def bundles_admin_download(slug: str):
+    with db.conn() as c:
+        b = bundles.get(c, slug)
+    if not b or not b["object_key"]:
+        raise HTTPException(404, "not built yet")
+    client, bucket = s3_client("r2")
+    return RedirectResponse(bundles.download_url(client, bucket, b), 303, headers=NO_STORE)
+
+
+def bundle_public_page(b, slug: str, msg: str = "", status: int = 200) -> HTMLResponse:
+    e = lambda v: html_escape(str(v if v is not None else ""))
+    if b:
+        size = f"{b['bytes'] / 1e6:,.1f} MB" if b["bytes"] and b["bytes"] >= 1e6 else f"{(b['bytes'] or 0) / 1e3:,.0f} KB"
+        n = (b["progress"] or {}).get("done")
+        facts = f"{e(size)}{f' &middot; {n:,} tenders' if n else ''} &middot; updated {e(b['built_at'].strftime('%d %b %Y'))}"
+        body = (f'<p class="facts">{facts}</p>' + (f'<p class="note">{e(b["public_note"])}</p>' if b["public_note"] else "")
+                + (f'<p class="err" role="alert">{e(msg)}</p>' if msg else "")
+                + f'''<form method="post" action="/bundle/{e(slug)}.zip"><label for="pw">Password</label>
+<input id="pw" name="password" type="password" autocomplete="current-password" required autofocus>
+<button>Download</button></form>
+<p class="small">The password opens this file only. The download link it gives you works for an hour.</p>''')
+    else:
+        body = f'<p class="err">{e(msg or "This bundle does not exist or is not shared.")}</p>'
+    html = (WEB / "bundle_public.html").read_text().replace("__NAME__", e(f"{slug}.zip")).replace("__BODY__", body)
+    return HTMLResponse(html, status, headers=NO_STORE)
+
+
+def html_escape(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
+def shared_bundle(c, slug: str):
+    """The bundle if its public link is open: built at least once, switched on, and with a password."""
+    b = bundles.get(c, slug)
+    return b if b and b["public"] and b["has_password"] and b["object_key"] else None
+
+
+@app.get("/bundle/{name}", response_class=HTMLResponse)
+def bundle_public(name: str):
+    m = ZIP_NAME.match(name)
+    if not m:
+        return bundle_public_page(None, name.removesuffix(".zip")[:63], status=404)
+    with db.conn() as c:
+        b = shared_bundle(c, m.group(1))
+    return bundle_public_page(b, m.group(1), status=200 if b else 404)
+
+
+@app.post("/bundle/{name}")
+async def bundle_unlock(name: str, request: Request):
+    m = ZIP_NAME.match(name)
+    if not m:
+        return bundle_public_page(None, name.removesuffix(".zip")[:63], status=404)
+    slug, ip = m.group(1), client_ip(request)
+    pw = parse_qs((await request.body()).decode("utf-8", "replace")).get("password", [""])[0][:200]
+    with db.conn() as c:
+        b = shared_bundle(c, slug)
+        if not b:
+            return bundle_public_page(None, slug, status=404)
+        if bundles.locked_out(c, slug, ip):
+            return bundle_public_page(b, slug, "Too many wrong passwords. Try again later.", 429)
+        ok = bundles.check_password(pw, bundles.password_record(c, slug))
+        bundles.note_attempt(c, slug, ip, ok)
+    if not ok:
+        return bundle_public_page(b, slug, "Wrong password.", 401)
+    client, bucket = s3_client("r2")
+    return RedirectResponse(bundles.download_url(client, bucket, b), 303, headers=NO_STORE)

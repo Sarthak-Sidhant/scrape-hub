@@ -1,0 +1,25 @@
+[Unit]
+Description=scrape-hub bundler: builds the tender bundles queued on /bundle and uploads each zip to R2
+After=network.target postgresql.service
+Wants=postgresql.service
+StartLimitIntervalSec=0
+
+[Service]
+User=scrapehub
+WorkingDirectory=/opt/scrape-hub
+EnvironmentFile=/etc/scrape-hub/env
+# B2 reads through the Cloudflare relay (deploy/b2-relay); put it in a drop-in: Environment=B2_RELAY_URL=https://b2-relay.<sub>.workers.dev
+Environment=BUNDLE_WORKDIR=/var/cache/scrape-hub-bundles BUNDLE_THREADS=8
+CacheDirectory=scrape-hub-bundles
+ExecStart=/opt/scrape-hub/.venv/bin/python scripts/bundler.py
+Restart=always
+RestartSec=5
+Nice=10
+MemoryMax=1536M
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

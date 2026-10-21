@@ -202,3 +202,35 @@ CREATE TABLE IF NOT EXISTS bucket_usage (   -- a full listing of each bucket, da
     bytes   BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS bucket_usage_at ON bucket_usage (store, at);
+
+-- tender bundles (scrape_hub/bundles.py): a zip of chosen tenders, built by scripts/bundler.py, downloadable at /bundle/<slug>.zip with its
+-- own password, which opens that zip and nothing else
+CREATE TABLE IF NOT EXISTS bundles (
+    slug        TEXT PRIMARY KEY,
+    title       TEXT NOT NULL DEFAULT '',
+    note        TEXT NOT NULL DEFAULT '',          -- private, for us
+    public_note TEXT NOT NULL DEFAULT '',          -- shown on the download page and in the zip
+    tenders     JSONB NOT NULL DEFAULT '[]',       -- ["2024_PWD_1_1", "gepnic-mahatenders:2024_PWD_2_1", ...]
+    include     JSONB NOT NULL DEFAULT '{"pages": true, "documents": true, "record": true}',
+    password    TEXT NOT NULL DEFAULT '',          -- scrypt$salt$hash; empty: the public link stays closed
+    public      BOOLEAN NOT NULL DEFAULT true,     -- the public link can be switched off without losing the password
+    status      TEXT NOT NULL DEFAULT 'queued',    -- queued, building, ready, failed
+    progress    JSONB NOT NULL DEFAULT '{}',
+    error       TEXT NOT NULL DEFAULT '',
+    object_key  TEXT,
+    bytes       BIGINT,
+    sha256      TEXT,
+    created_by  TEXT NOT NULL DEFAULT '',
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    built_at    TIMESTAMPTZ,
+    downloads   INT NOT NULL DEFAULT 0,
+    last_download_at TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS bundle_attempts (    -- password tries on the public page, for the lockout
+    slug TEXT NOT NULL,
+    ip   TEXT NOT NULL,
+    ok   BOOLEAN NOT NULL,
+    at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS bundle_attempts_slug_at ON bundle_attempts (slug, at);

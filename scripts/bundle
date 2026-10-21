@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Tender bundles from a shell on the VPS: runs scripts/bundlectl.py as the hub's user with the hub's environment (nothing secret is read here).
+# Install: cp scripts/bundle ~/bin/bundle. Usage: bundle --help
+exec sudo -n systemd-run --quiet --pipe --wait --collect --uid=scrapehub --gid=scrapehub \
+  -p EnvironmentFile=/etc/scrape-hub/env -p WorkingDirectory=/opt/scrape-hub \
+  /opt/scrape-hub/.venv/bin/python scripts/bundlectl.py "$@"

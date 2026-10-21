@@ -1,0 +1,153 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Scrape hub: bundles</title><link rel="stylesheet" href="/assets/hub.css"><style>
+label{display:block;font-size:11px;color:var(--dim);margin:10px 0 4px;letter-spacing:.04em}
+input[type=text],input[type=password],textarea{font:inherit;font-size:13px;padding:6px 10px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--text);width:100%}
+textarea{min-height:110px;resize:vertical}
+button{font:inherit;font-size:12px;padding:5px 12px;border-radius:6px;border:1px solid var(--line);background:var(--panel2);color:var(--text);cursor:pointer}
+button.pri{background:var(--accent);border-color:var(--accent);color:var(--bg);font-weight:700}button.danger{color:var(--bad)}
+button:disabled{opacity:.5;cursor:default}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.row>*{flex:0 0 auto}
+.slug{display:flex;align-items:center;gap:4px}.slug input{width:min(320px,100%)}
+.form{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:0 24px}
+.checks{display:flex;gap:16px;flex-wrap:wrap;margin-top:4px}.checks label{display:flex;gap:6px;align-items:center;margin:0;font-size:13px;color:var(--text)}
+table{width:100%;border-collapse:collapse;font-size:12px}td,th{padding:5px 12px 5px 0;text-align:left;border-top:1px solid var(--line);vertical-align:top}
+th{color:var(--dim);font-size:11px;font-weight:400}td.n,th.n{text-align:right}
+.scroll{overflow-x:auto}.bar{height:6px;background:var(--bar);border-radius:3px;overflow:hidden;width:120px;margin-top:3px}.bar i{display:block;height:100%;background:var(--accent)}
+.pill{display:inline-block;padding:0 8px;border-radius:99px;border:1px solid var(--line);font-size:11px}
+.msg{margin-top:8px;font-size:12px;min-height:1em}.secret{font-size:15px;font-weight:700;padding:6px 10px;border:1px dashed var(--accent);border-radius:6px;display:inline-block;user-select:all}
+details summary{cursor:pointer;color:var(--dim)}.mono-list{max-height:180px;overflow:auto;font-size:12px;white-space:pre-wrap;color:var(--dim)}
+dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:16px;width:min(760px,calc(100% - 32px))}
+dialog::backdrop{background:#0008}
+</style></head><body>
+<header><h1>BUNDLES</h1><!--NAV--><span class="sp"></span></header>
+<main>
+<section>
+ <h2>New bundle</h2>
+ <p class="lede">Paste tender ids (any text works: lines, a spreadsheet column, portal URLs). Pin a portal with <code>gepnic-mahatenders:2024_PWD_1_1</code>.
+ The zip holds one folder per tender with the portal's pages, the documents it served and the hub's record, plus an index. Anyone with
+ the link and the password can download that one zip; the password opens nothing else.</p>
+ <form id="new" class="form" autocomplete="off">
+  <div>
+   <label for="n-slug">Name (the link)</label>
+   <div class="slug"><span class="dim">scrape.s1d.me/bundle/</span><input id="n-slug" type="text" required pattern="[a-z0-9][a-z0-9\-]{1,62}" placeholder="drdo-2024-awards" aria-describedby="slug-help"><span class="dim">.zip</span></div>
+   <div class="dim" id="slug-help" style="font-size:11px;margin-top:3px">lowercase letters, digits and dashes</div>
+   <label for="n-title">Title (inside the zip and on this page)</label><input id="n-title" type="text" maxlength="200">
+   <label for="n-tenders">Tender ids</label><textarea id="n-tenders" required placeholder="2024_DRDO_875304_1&#10;2023_PWD_12345_2"></textarea>
+   <div class="row" style="margin-top:6px"><button type="button" id="check">Check tenders</button><span class="dim" id="check-msg"></span></div>
+  </div>
+  <div>
+   <label>Include</label>
+   <div class="checks"><label><input type="checkbox" id="i-pages" checked> portal pages (HTML)</label>
+   <label><input type="checkbox" id="i-documents" checked> documents</label><label><input type="checkbox" id="i-record" checked> hub record (JSON)</label></div>
+   <label for="n-public">Note shown on the download page and in the zip (optional)</label><textarea id="n-public" style="min-height:60px" maxlength="2000"></textarea>
+   <label for="n-note">Private note (only here)</label><textarea id="n-note" style="min-height:60px" maxlength="4000"></textarea>
+   <label for="n-pw">Password</label>
+   <div class="row"><input id="n-pw" type="text" style="width:min(260px,100%)" placeholder="leave empty to set later"><button type="button" id="gen">Generate</button></div>
+   <div class="row" style="margin-top:14px"><button class="pri" id="create">Create and build</button></div>
+   <div class="msg" id="new-msg" role="status"></div>
+  </div>
+ </form>
+ <div id="preview" class="scroll"></div>
+</section>
+
+<section>
+ <div class="head"><div><h2>Bundles</h2></div></div>
+ <div class="scroll"><table id="list"><tr><td class="dim">loading...</td></tr></table></div>
+</section>
+</main>
+
+<dialog id="dlg"><form method="dialog" id="dlg-body"></form></dialog>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const size=b=>b==null?"":b>=1e9?(b/1e9).toFixed(2)+" GB":b>=1e6?(b/1e6).toFixed(1)+" MB":Math.max(1,Math.round(b/1e3))+" KB";
+const when=t=>t?new Date(t).toLocaleString(undefined,{dateStyle:"medium",timeStyle:"short"}):"";
+const pub=s=>`${location.origin}/bundle/${s}.zip`;
+async function api(path,opt={}){
+ const r=await fetch(path,{...opt,headers:{"Content-Type":"application/json",...(opt.headers||{})}});
+ if(r.status===401){location="/login";throw new Error("login")}
+ const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail?(typeof d.detail==="string"?d.detail:JSON.stringify(d.detail)):r.statusText);return d}
+const include=p=>({pages:$(p+"pages").checked,documents:$(p+"documents").checked,record:$(p+"record").checked});
+function genpw(){const a="abcdefghjkmnpqrstuvwxyz23456789",r=crypto.getRandomValues(new Uint32Array(16));return [0,1,2,3].map(g=>[0,1,2,3].map(i=>a[r[g*4+i]%a.length]).join("")).join("-")}
+
+function previewTable(d){
+ const t=d.tenders;let h=`<p class="dim" style="margin:12px 0 6px">${t.length} found${d.missing.length?`, <span class="warn">${d.missing.length} not in the hub</span>`:""}; documents about ${size(d.doc_bytes)}</p>`;
+ if(d.missing.length)h+=`<details><summary>not found (${d.missing.length})</summary><div class="mono-list">${esc(d.missing.join("\n"))}</div></details>`;
+ if(t.length)h+=`<table><tr><th>Tender</th><th>Portal</th><th>Organisation</th><th>Title</th><th class="n">Docs stored</th><th class="n">Size</th></tr>${t.slice(0,300).map(x=>`<tr><td><a href="/tender?id=${encodeURIComponent(x.tender_id)}">${esc(x.tender_id)}</a></td><td>${esc(x.portal)}</td><td>${esc(x.organisation)}</td><td>${esc(x.title)}</td><td class="n">${x.docs_stored} / ${x.docs_total}</td><td class="n">${size(x.doc_bytes)}</td></tr>`).join("")}</table>${t.length>300?`<p class="dim">and ${t.length-300} more</p>`:""}`;
+ return h}
+$("check").onclick=async()=>{$("check-msg").textContent="checking...";
+ try{const d=await api("/api/bundles/preview",{method:"POST",body:JSON.stringify({tenders:$("n-tenders").value})});$("check-msg").textContent=`${d.entries.length} ids read`;$("preview").innerHTML=previewTable(d)}
+ catch(e){$("check-msg").innerHTML=`<span class="bad">${esc(e.message)}</span>`}};
+$("gen").onclick=()=>{$("n-pw").value=genpw()};
+$("new").onsubmit=async e=>{e.preventDefault();$("create").disabled=true;$("new-msg").textContent="creating...";
+ const pw=$("n-pw").value.trim();
+ try{const b=await api("/api/bundles",{method:"POST",body:JSON.stringify({slug:$("n-slug").value.trim(),title:$("n-title").value,tenders:$("n-tenders").value,
+   public_note:$("n-public").value,note:$("n-note").value,include:include("i-"),password:pw})});
+  $("new-msg").innerHTML=`<span class="ok">Queued <b>${esc(b.slug)}.zip</b>.</span> ${pw?`Link: <a href="${esc(pub(b.slug))}">${esc(pub(b.slug))}</a> &middot; password <span class="secret">${esc(pw)}</span> (shown once)`:"Set a password before sharing it."}`;
+  ["n-slug","n-title","n-tenders","n-public","n-note","n-pw"].forEach(i=>$(i).value="");$("preview").innerHTML="";load()}
+ catch(e){$("new-msg").innerHTML=`<span class="bad">${esc(e.message)}</span>`}
+ $("create").disabled=false};
+
+let rows=[],timer=null;
+function status(b){const p=b.progress||{};
+ if(b.status==="building")return `<span class="warn">building</span> ${p.done??0} / ${p.total??"?"}<div class="bar"><i style="width:${p.total?Math.round(100*(p.done||0)/p.total):0}%"></i></div>`;
+ if(b.status==="queued")return `<span class="warn">queued</span>${b.object_key?' <span class="dim">(older zip still served)</span>':""}`;
+ if(b.status==="failed")return `<span class="bad">failed</span> <span class="dim">${esc(b.error)}</span>`;
+ return `<span class="ok">ready</span>`}
+function sharing(b){
+ if(!b.object_key)return `<span class="dim">after the build</span>`;
+ if(!b.has_password)return `<span class="warn">no password: closed</span>`;
+ if(!b.public)return `<span class="dim">switched off</span>`;
+ return `<a href="${esc(pub(b.slug))}">open</a> <button data-a="copy" data-s="${esc(b.slug)}">copy link</button>`}
+async function load(){
+ try{const d=await api("/api/bundles");rows=d.bundles;
+  $("list").innerHTML=rows.length?`<tr><th>Bundle</th><th>Status</th><th class="n">Tenders</th><th class="n">Docs</th><th class="n">Size</th><th>Public link</th><th class="n">Downloads</th><th>Built</th><th></th></tr>`+rows.map(b=>{const p=b.progress||{};
+   return `<tr><td><b>${esc(b.slug)}.zip</b>${b.title?`<div class="dim">${esc(b.title)}</div>`:""}${p.missing&&p.missing.length?`<div class="warn">${p.missing.length} ids not found</div>`:""}</td>
+   <td>${status(b)}</td><td class="n">${p.done??b.n_tenders}${p.done!=null&&p.done!==b.n_tenders?` <span class="dim">of ${b.n_tenders}</span>`:""}</td>
+   <td class="n">${p.documents??""}${p.documents_unavailable?` <span class="dim">+${p.documents_unavailable} n/a</span>`:""}</td><td class="n">${size(b.bytes)}</td>
+   <td>${sharing(b)}</td><td class="n">${b.downloads}${b.last_download_at?`<div class="dim">${esc(when(b.last_download_at))}</div>`:""}</td><td>${esc(when(b.built_at))}</td>
+   <td><div class="row">${b.object_key?`<a href="/api/bundles/${encodeURIComponent(b.slug)}/download">download</a>`:""}<button data-a="edit" data-s="${esc(b.slug)}">manage</button></div></td></tr>`}).join("")
+   :`<tr><td class="dim">No bundles yet.</td></tr>`;
+  clearTimeout(timer);if(rows.some(b=>b.status==="queued"||b.status==="building"))timer=setTimeout(load,3000)}
+ catch(e){if(e.message!=="login")$("list").innerHTML=`<tr><td class="bad">${esc(e.message)}</td></tr>`}}
+
+$("list").addEventListener("click",async e=>{const btn=e.target.closest("button[data-a]");if(!btn)return;const s=btn.dataset.s;
+ if(btn.dataset.a==="copy"){await navigator.clipboard.writeText(pub(s));btn.textContent="copied";setTimeout(()=>btn.textContent="copy link",1500)}
+ if(btn.dataset.a==="edit")manage(s)});
+
+async function manage(slug){
+ const b=await api("/api/bundles/"+encodeURIComponent(slug)),inc=b.include||{},p=b.progress||{};
+ $("dlg-body").innerHTML=`<div class="head"><h2>${esc(b.slug)}.zip</h2><button value="close" aria-label="Close">close</button></div>
+ <p class="dim" style="margin:0">created ${esc(when(b.created_at))}${b.created_by?" by "+esc(b.created_by):""} &middot; ${status(b)}${p.seconds!=null?` &middot; last build ${p.seconds} s, B2 reads ${p.via_relay||0} through Cloudflare, ${p.direct||0} direct`:""}</p>
+ ${p.missing&&p.missing.length?`<details style="margin-top:8px"><summary class="warn">${p.missing.length} ids not found in the hub</summary><div class="mono-list">${esc(p.missing.join("\n"))}</div></details>`:""}
+ <h2 style="margin-top:16px">Password</h2>
+ <p class="dim" style="margin:0 0 6px">${b.has_password?"A password is set. Setting a new one replaces it at once.":"No password: the public link stays closed."}</p>
+ <div class="row"><input id="m-pw" type="text" style="width:min(260px,100%)" placeholder="new password" autocomplete="off"><button type="button" id="m-setpw">Set</button><button type="button" id="m-genpw">Generate</button>${b.has_password?`<button type="button" class="danger" id="m-clearpw">Remove</button>`:""}</div>
+ <div class="msg" id="m-pwmsg" role="status"></div>
+ <div class="checks" style="margin-top:8px"><label><input type="checkbox" id="m-public" ${b.public?"checked":""}> public link on</label></div>
+ <h2 style="margin-top:16px">Contents</h2>
+ <label for="m-title">Title</label><input id="m-title" type="text" value="${esc(b.title)}" maxlength="200">
+ <label for="m-tenders">Tender ids (${b.tenders.length})</label><textarea id="m-tenders">${esc(b.tenders.join("\n"))}</textarea>
+ <div class="checks"><label><input type="checkbox" id="m-pages" ${inc.pages?"checked":""}> portal pages</label><label><input type="checkbox" id="m-documents" ${inc.documents?"checked":""}> documents</label><label><input type="checkbox" id="m-record" ${inc.record?"checked":""}> hub record</label></div>
+ <label for="m-public-note">Note on the download page and in the zip</label><textarea id="m-public-note" style="min-height:50px">${esc(b.public_note)}</textarea>
+ <label for="m-note">Private note</label><textarea id="m-note" style="min-height:50px">${esc(b.note)}</textarea>
+ <div class="row" style="margin-top:12px"><button type="button" class="pri" id="m-save">Save</button><button type="button" id="m-rebuild">Rebuild now</button><span class="sp" style="flex:1"></span><button type="button" class="danger" id="m-del">Delete bundle</button></div>
+ <div class="msg" id="m-msg" role="status"></div>`;
+ const D=$("dlg");if(!D.open)D.showModal();
+ const say=(id,h)=>$(id).innerHTML=h, bad=e=>`<span class="bad">${esc(e.message)}</span>`;
+ const setpw=async(body,label)=>{try{const r=await api(`/api/bundles/${encodeURIComponent(slug)}/password`,{method:"POST",body:JSON.stringify(body)});
+   say("m-pwmsg",r.has_password?`<span class="ok">${label}</span>${r.password||body.password?` <span class="secret">${esc(r.password||body.password)}</span> (shown once)`:""}`:`<span class="ok">removed; the link is closed</span>`);$("m-pw").value="";load()}catch(e){say("m-pwmsg",bad(e))}};
+ $("m-setpw").onclick=()=>setpw({password:$("m-pw").value.trim()},"password set:");
+ $("m-genpw").onclick=()=>setpw({generate:true},"new password:");
+ if($("m-clearpw"))$("m-clearpw").onclick=()=>{if(confirm("Remove the password? The public link stops working."))setpw({password:""},"")};
+ $("m-public").onchange=async e=>{try{await api("/api/bundles/"+encodeURIComponent(slug),{method:"POST",body:JSON.stringify({public:e.target.checked})});load()}catch(err){say("m-msg",bad(err))}};
+ $("m-save").onclick=async()=>{try{const r=await api("/api/bundles/"+encodeURIComponent(slug),{method:"POST",body:JSON.stringify({title:$("m-title").value,tenders:$("m-tenders").value,
+   include:include("m-"),public_note:$("m-public-note").value,note:$("m-note").value})});say("m-msg",`<span class="ok">saved</span>${r.status==="queued"?" &middot; rebuilding":""}`);load()}catch(e){say("m-msg",bad(e))}};
+ $("m-rebuild").onclick=async()=>{try{await api(`/api/bundles/${encodeURIComponent(slug)}/rebuild`,{method:"POST"});say("m-msg",`<span class="ok">queued</span>`);load()}catch(e){say("m-msg",bad(e))}};
+ $("m-del").onclick=async()=>{if(!confirm(`Delete ${slug}.zip? The link stops working and the zip is removed.`))return;
+   try{await api("/api/bundles/"+encodeURIComponent(slug),{method:"DELETE"});D.close();load()}catch(e){say("m-msg",bad(e))}};
+}
+load();
+</script></body></html>

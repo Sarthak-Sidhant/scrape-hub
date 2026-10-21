@@ -29,6 +29,7 @@ Sign in with the same password as `status.s1d.me` (`STATUS_PASSWORD_FILE`). Ever
 | `/data` | What the scraped eprocure tenders say: per year and stage, monthly seasonality, single-bid share, bids per tender, tender size, time to award, category mix, biggest buyers, most frequent winners, documents the portal refuses |
 | `/explore` | Zoomable records-per-minute and outage chart over 7 days |
 | `/tender` | Look up one stored tender with its documents |
+| `/bundle` | Tender bundles: zips of chosen tenders to share, see below |
 
 Background jobs (systemd timers, all as the `scrapehub` user):
 
@@ -38,6 +39,25 @@ Background jobs (systemd timers, all as the `scrapehub` user):
 | `scrape-hub-ramp` (03:45 and 15:15 IST) | `scripts/ramp.py`: raises 1, 4, 8, 16 parallel workers per portal server and records where it slows down (table `capacity`); skips servers our runners are scraping |
 | `scrape-hub-showcase` (05:00) | rebuilds `eprocure.tender_index`, `eprocure.tender_facts` (`scripts/ops/*.sql`, as postgres) and the `/data` numbers (`scripts/build_showcase.py`, table `showcase`) |
 | `scrape-hub-backup` (03:30) | `pg_dump` to object storage |
+
+## Tender bundles
+
+A bundle is a zip of chosen tenders, shared at `scrape.s1d.me/bundle/<name>.zip`. Anyone with the link sees a password page; the bundle's own
+password downloads that one zip (a presigned R2 link valid for an hour) and opens nothing else. 8 wrong tries from one address in 15 minutes,
+or 60 in an hour from anywhere, lock that bundle's page for a while.
+
+- **Make one**: on `/bundle` (paste tender ids in any text; pin a portal with `gepnic-mahatenders:2024_PWD_1_1`), or from a shell on the VPS
+  with `scripts/bundle` (installed as `~/bin/bundle`): `bundle preview < ids.txt`, `bundle create drdo-2024 --title "..." --generate-password --wait < ids.txt`,
+  `bundle add|remove|password|public|rebuild|delete|list|show`.
+- **In the zip**: `index.html` (one row per tender, links into the folders), `tenders.csv`, `README.txt` (what is missing and why),
+  `manifest.json` (every file with SHA-256 and source), and per tender `tenders/<id>/pages/{status,details,summary}.html` (the portal's pages
+  as scraped), `documents/` (the files the portal served) and `record.json` (everything the hub stored). Each part can be left out.
+- **Built by** `scrape-hub-bundler.service` (`scripts/bundler.py`), one bundle at a time, 8 tenders fetched in parallel, written to
+  `/var/cache/scrape-hub-bundles` and uploaded to R2 as `bundles/<name>.zip`. Changing the tenders or contents rebuilds; the old zip is served
+  until the new one replaces it. Deleting removes the zip.
+- **B2 egress**: with `B2_RELAY_URL` set (a drop-in on the bundler), B2 objects are fetched through the `b2-relay` Cloudflare Worker
+  (`deploy/b2-relay`, deploy with `deploy.py`): the hub presigns each GET and the Worker only relays signed URLs for the `gepnic-scrape` bucket,
+  so B2 to Cloudflare transfer is free under the Bandwidth Alliance. Unset, the bundler reads B2 directly. R2 reads have no egress fee.
 
 ## Layout
 
