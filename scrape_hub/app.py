@@ -1688,6 +1688,23 @@ def showcase_api(project: str = "eprocure-tenders"):
     return JSONResponse(json.loads(json.dumps({"project": project, "built_at": row["built_at"], **row["data"]}, default=_iso)))
 
 
+@app.get("/data/quality", response_class=HTMLResponse)
+def quality_page(request: Request):
+    if not logged_in(request):
+        return RedirectResponse("/login", 303)
+    return page("quality.html", "/data")
+
+
+@app.get("/api/quality", dependencies=[Depends(need_login)])
+def quality_api():
+    """The data-quality checks over every stored tender (scripts/build_quality.py, from quality.facts), as built last."""
+    with db.conn() as c:
+        row = c.execute("SELECT built_at, data FROM showcase WHERE project='quality'").fetchone()
+    if not row:
+        raise HTTPException(404, "not built yet: run scripts/ops/quality_facts.sql, then scripts/build_quality.py")
+    return JSONResponse(json.loads(json.dumps({"built_at": row["built_at"], **row["data"]}, default=_iso)))
+
+
 # ----------------------------------------------------------------------------- tender bundles (scrape_hub/bundles.py)
 # /bundle is our page (dashboard login); /bundle/<slug>.zip is public and asks for that bundle's own password, which opens only that zip.
 # Every answer under /bundle says no-store: Cloudflare caches .zip paths by default, and a cached password page or redirect would leak.

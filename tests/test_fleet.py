@@ -71,10 +71,21 @@ def test_showcase_is_served_once_built(client, clean, login):
     assert d["totals"]["tenders"] == 5 and d["project"] == "eprocure-tenders" and d["built_at"]
 
 
+def test_quality_is_served_once_built(client, clean, login):
+    assert login.get("/api/quality").status_code == 404
+    with db.conn() as c:
+        c.execute("INSERT INTO showcase (project, data) VALUES ('quality', %s::jsonb)", (json.dumps({"overall": {"tenders": 7}, "portals": []}),))
+    d = login.get("/api/quality").json()
+    assert d["overall"]["tenders"] == 7 and d["built_at"]
+    assert TestClient(app).get("/api/quality").status_code == 401
+
+
 def test_pages_share_the_navigation_and_need_login(client, clean, login):
     for path in ("/", "/portals", "/data", "/explore", "/tender"):
         html = login.get(path).text
         assert '<nav class="nav">' in html and f'<a href="{path}" aria-current="page">' in html and "<!--NAV-->" not in html
+    html = login.get("/data/quality").text
+    assert '<a href="/data" aria-current="page">' in html and "/api/quality" in html
     assert login.get("/assets/charts.js").status_code == 200 and login.get("/assets/hub.css").headers["content-type"].startswith("text/css")
     assert login.get("/assets/..%2Fapp.py").status_code == 404
     anon = TestClient(app)

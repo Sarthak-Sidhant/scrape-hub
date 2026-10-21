@@ -85,9 +85,9 @@ const Hub = (() => {
     svg.querySelector(".hit").addEventListener("pointerleave", () => { tp.hide(); xh.setAttribute("visibility", "hidden") });
   }
 
-  // heatmap: o {rows[], cols[], value:(r,c)=>n|null, fmt, head:(r,c)=>string, extra:(r,c)=>[rows]}
+  // heatmap: o {rows[], cols[], value:(r,c)=>n|null, fmt, head:(r,c)=>string, extra:(r,c)=>[rows], left: label width in px (default 46)}
   function heat(el, o) {
-    const W = Math.max(320, el.clientWidth || 600), L = 46, T = 18, R = 4, cw = (W - L - R) / o.cols.length, ch = Math.max(14, Math.min(22, cw * 0.7)), H = T + o.rows.length * ch + 4;
+    const W = Math.max(320, el.clientWidth || 600), L = o.left || 46, T = 18, R = 4, cw = (W - L - R) / o.cols.length, ch = Math.max(14, Math.min(22, cw * 0.7)), H = T + o.rows.length * ch + 4;
     const vals = []; o.rows.forEach((_, r) => o.cols.forEach((_, c) => { const v = o.value(r, c); if (v != null) vals.push(v) }));
     const max = Math.max(...vals, 1), steps = ["--q1", "--q2", "--q3", "--q4", "--q5", "--q6"];
     let g = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.aria || "heatmap")}">`;

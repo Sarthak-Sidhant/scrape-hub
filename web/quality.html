@@ -1,0 +1,194 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex"><title>Scrape hub: data quality</title><link rel="stylesheet" href="/assets/hub.css"><style>
+.tabs{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.tabs a{padding:4px 12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--dim);font-size:12px}
+.tabs a[aria-current=page]{color:var(--text);background:var(--panel2);font-weight:700}
+.ctl{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.ctl select{font:inherit;font-size:12px;padding:3px 6px;background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:6px;max-width:100%}
+.sev{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;white-space:nowrap}.sev::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.sev.error{color:var(--bad)}.sev.warn{color:var(--warn)}.sev.info{color:var(--dim)}
+td.lab{min-width:240px;max-width:460px;white-space:normal}td.lab small.note-c{color:var(--text);opacity:.8;margin-top:4px;border-left:2px solid var(--accent);padding-left:6px}td.lab small{display:block;color:var(--dim);font-size:11px;line-height:1.35}
+.grp td{color:var(--dim);font-size:11px;letter-spacing:.1em;text-transform:uppercase;padding-top:14px;border-top:1px solid var(--line)}
+.ex a{margin-right:8px;white-space:nowrap}.ex{font-size:11px;max-width:240px;white-space:normal}
+tr.click{cursor:pointer}tr.click:hover td{background:var(--panel2)}
+.rate{display:flex;align-items:center;gap:8px;justify-content:flex-end}.rate i{display:block;height:8px;border-radius:0 3px 3px 0;min-width:1px}
+.rate i.error{background:var(--bad)}.rate i.warn{background:var(--warn)}.rate i.info{background:var(--sx)}.rate i.ok{background:var(--s1)}
+label.chk{font-size:12px;color:var(--dim);display:inline-flex;gap:6px;align-items:center}
+</style></head><body>
+<header><h1>DATA</h1><!--NAV--><span class="sp"></span><span class="dim" id="built">loading</span></header>
+<main>
+<div class="head"><nav class="tabs" aria-label="data views"><a href="/data">What the data says</a><a href="/data/quality" aria-current="page">Data quality</a></nav>
+<div class="ctl"><label class="dim" for="scope">Portal</label><select id="scope"></select></div></div>
+<div class="kpis" id="kpis"></div>
+
+<section id="s-score"><div class="head"><div><h2>Portal scorecard</h2>
+<p class="lede">Each portal's stored tenders against what the portal itself counted, the share of tenders with no error-level problem, and its most common problem. Click a portal to see only its numbers.</p></div></div>
+<div class="scroll"><table id="t-score"></table></div></section>
+
+<section id="s-checks"><div class="head"><div><h2>Every check</h2>
+<p class="lede">Each check counts the tenders it applies to and those that fail it. <span class="sev error">error</span> the stored record is wrong or unusable as it is &nbsp;<span class="sev warn">warning</span> the portal's data is doubtful, or we should fetch it again &nbsp;<span class="sev info">info</span> describes what the portals publish. The ids link to the tender lookup.</p></div>
+<label class="chk"><input type="checkbox" id="hidepass" checked> hide checks nothing fails</label></div>
+<div class="scroll"><table id="t-checks"></table></div></section>
+
+<section id="s-heat"><div class="head"><div><h2 id="h-heat">Where and when a problem occurs</h2>
+<p class="lede" id="l-heat"></p></div><div class="ctl"><select id="heatcheck" aria-label="check to map"></select><div class="seg view"></div></div></div>
+<div class="chart" id="c-heat"></div></section>
+
+<section id="s-fill"><div class="head"><div><h2>How complete the fields are</h2>
+<p class="lede" id="l-fill"></p></div><div class="seg view"></div></div>
+<div class="chart" id="c-fill"></div></section>
+
+<section id="s-cov"><div class="head"><div><h2>Coverage: stored against what the portal counted</h2>
+<p class="lede">The crawler splits each portal into search windows (organisation and date range) and records how many tenders the portal said each window holds. A window is short when it is marked done but holds under 98% of that count. Failed, parked and pending windows are still to be crawled.</p></div></div>
+<div class="scroll"><table id="t-cov"></table></div>
+<h2 style="margin-top:16px">Biggest short windows</h2><div class="tblwrap"><table id="t-short"></table></div><p class="note" id="n-short"></p></section>
+
+<div class="grid2">
+<section id="s-docs"><div class="head"><div><h2>Documents by year of publication</h2>
+<p class="lede">Share of listed document files that were stored, refused by the portal (its error page), failed, or never downloaded.</p></div><div class="seg view"></div></div>
+<div class="chart" id="c-docs"></div></section>
+<section><h2>One tender id, two portals</h2><p class="lede">Tender ids are numbered per portal, so the same id turns up on two portals for two different tenders (same title shows the rare real duplicates). Anything that merges portals must key on portal and id.</p>
+<div class="tblwrap"><table id="t-dup"></table></div></section>
+</div>
+
+<section><h2>Still missing: what the crawler gave up on</h2><p class="lede">Failure rows the hub keeps. A tender's row is removed when it is stored later, so tender rows are tenders still missing; document rows are files the portal would not serve.</p>
+<div class="tblwrap"><table id="t-fail"></table></div></section>
+<p class="note" id="foot"></p>
+</main>
+<script src="/assets/charts.js"></script>
+<script>
+const {esc,fmt,pct,j}=Hub,$=id=>document.getElementById(id);
+const SEV={error:"error",warn:"warning",info:"info"};
+const rate=(n,of)=>of?n/of:null;
+const tbl=(head,rows)=>`<table><tr>${head.map(h=>`<th class="${h[1]||""}">${esc(h[0])}</th>`).join("")}</tr>${rows.map(r=>`<tr>${r.map((c,i)=>`<td class="${head[i][1]||""}">${c}</td>`).join("")}</tr>`).join("")}</table>`;
+const bar=(v,cls,w=90)=>`<span class="rate">${v==null?"-":pct(v,v<.01&&v>0?2:1)}<i class="${cls}" style="width:${v==null?0:Math.max(1,Math.min(1,v)*w)}px"></i></span>`;
+let D,P={},scope="all";
+// chart/table switch that survives re-renders (Hub.view adds new listeners on every call; this page redraws on every portal change)
+const VIEWS=new Map();
+function view(section,el,draw,table){
+ let v=VIEWS.get(section);
+ if(!v){v={mode:"chart"};VIEWS.set(section,v);const bar=section.querySelector(".seg.view");
+  bar.innerHTML=`<button aria-pressed="true" data-m="chart">Chart</button><button aria-pressed="false" data-m="table">Table</button>`;
+  bar.addEventListener("click",e=>{const b=e.target.closest("[data-m]");if(!b)return;v.mode=b.dataset.m;bar.querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",x.dataset.m===v.mode));v.show()});
+  let rz;addEventListener("resize",()=>{clearTimeout(rz);rz=setTimeout(()=>{if(v.mode==="chart")v.show()},150)})}
+ v.show=()=>{if(v.mode==="chart")draw();else el.innerHTML=`<div class="tblwrap">${table()}</div>`};v.show()}
+// room for the longest row label (about 6.5 px per character at 10 px monospace), at most a third of the chart
+const labW=(labels,el)=>Math.min(Math.round((el.clientWidth||600)/3),Math.max(46,Math.max(...labels.map(l=>String(l).length))*6.5+10));
+const tenderLink=(p,id)=>`<a href="/tender?project=${encodeURIComponent(p)}&id=${encodeURIComponent(id)}">${esc(id)}</a>`;
+const short=t=>t.replace(/ \(.*\)$/,"");
+
+function scoped(){return scope==="all"?D.overall:P[scope]}
+function coverage(list){const c={expected:0,stored:0,windows:0,short:0,missing:0,open:0,open_exp:0};
+ list.forEach(p=>{const v=p.coverage;if(!v)return;c.expected+=v.expected;c.stored+=v.stored_in_windows;c.windows+=v.windows;c.short+=v.short_windows;c.missing+=v.short_missing;
+  for(const s of ["failed","parked","pending","claimed"]){const b=v.by_status[s];if(b){c.open+=b.windows;c.open_exp+=b.expected}}});return c}
+
+function render(){
+ const S=scoped(),list=scope==="all"?D.portals:[P[scope]],C=coverage(list),CK=D.checks;
+ const errs=CK.filter(c=>c.severity==="error"),docsT=S.docs_n||0;
+ $("kpis").innerHTML=`<div class="kpi"><b>${fmt(S.tenders)}</b><span>tenders checked${scope==="all"?` across ${D.portals.length} portals`:""}</span></div>
+  <div class="kpi"><b>${pct(rate(S.clean,S.tenders))}</b><span>clean: no error-level problem (${fmt(S.tenders-S.clean)} with one)</span></div>
+  <div class="kpi"><b>${C.expected?pct(rate(C.stored,C.expected)):"-"}</b><span>of the ${fmt(C.expected)} tenders the portal counted are stored; ${fmt(C.open)} windows still open</span></div>
+  <div class="kpi"><b>${fmt(C.short)}</b><span>windows marked done but short, ${fmt(C.missing)} tenders missing</span></div>
+  <div class="kpi"><b>${docsT?pct(rate(S.docs_refused,docsT)):"-"}</b><span>of ${fmt(docsT)} document links refused by the portal; ${fmt(S.docs_stored)} stored</span></div>`;
+ // scorecard
+ const worst=p=>{let b=null;CK.forEach(c=>{if(c.severity==="info")return;const [n,of]=p.checks[c.id];const r=rate(n,of);if(n>=10&&r!=null&&(!b||r>b.r))b={c,r,n}});return b};
+ $("t-score").innerHTML=`<tr><th>Portal</th><th class="n">Tenders</th><th class="n">Stored of counted</th><th class="n">Clean</th><th class="n">Short windows</th><th class="n">Docs refused</th><th>Most common problem</th></tr>`+
+  D.portals.map(p=>{const c=coverage([p]),w=worst(p);return `<tr class="click${p.project===scope?" sel":""}" data-p="${esc(p.project)}"${p.project===scope?' style="outline:1px solid var(--accent)"':""}>
+   <td>${esc(p.title)}<br><small class="dim">${esc(p.portal)}</small></td><td class="n">${fmt(p.tenders)}</td><td class="n">${bar(c.expected?rate(c.stored,c.expected):null,"ok",70)}</td>
+   <td class="n">${bar(rate(p.clean,p.tenders),"ok",70)}</td><td class="n">${c.short?`${fmt(c.short)} <span class="dim">(${fmt(c.missing)})</span>`:"0"}</td>
+   <td class="n">${p.docs_n?pct(rate(p.docs_refused,p.docs_n)):"-"}</td><td>${w?`<span class="sev ${w.c.severity}">${esc(w.c.label)}</span> <span class="dim">${pct(w.r)}</span>`:'<span class="dim">none</span>'}</td></tr>`}).join("");
+ // checks
+ const hide=$("hidepass").checked;let rows="",grp="";
+ const top=c=>scope!=="all"?"":D.portals.map(p=>({p,n:p.checks[c.id][0],r:rate(...p.checks[c.id])})).filter(x=>x.n>0&&x.p.checks[c.id][1]>=200).sort((a,b)=>b.r-a.r).slice(0,3)
+   .map(x=>`${esc(short(x.p.title))} <span class="dim">${pct(x.r)}</span>`).join("<br>");
+ CK.forEach(c=>{const [n,of]=S.checks[c.id];if(hide&&!n)return;
+  if(c.group!==grp){grp=c.group;rows+=`<tr class="grp"><td colspan="7">${esc(grp)}</td></tr>`}
+  const ex=scope==="all"?D.portals.filter(p=>p.examples[c.id]).slice(0,2).flatMap(p=>p.examples[c.id].slice(0,1).map(id=>tenderLink(p.project,id))):(P[scope].examples[c.id]||[]).map(id=>tenderLink(scope,id));
+  rows+=`<tr><td><span class="sev ${c.severity}">${SEV[c.severity]}</span></td><td class="lab">${esc(c.label)}<small>${esc(c.about)}</small>${c.note?`<small class="note-c">${esc(c.note)}</small>`:""}</td><td class="n">${fmt(n)}</td><td class="n dim">${fmt(of)}</td>
+   <td class="n">${bar(rate(n,of),c.severity)}</td>${scope==="all"?`<td class="ex">${top(c)}</td>`:""}<td class="ex">${ex.join(" ")}</td></tr>`});
+ $("t-checks").innerHTML=`<tr><th></th><th>Check</th><th class="n">Failing</th><th class="n">Of</th><th class="n">Rate</th>${scope==="all"?"<th>Worst portals</th>":""}<th>Examples</th></tr>`+rows;
+ heat();fill();cov(list);docs();
+ // duplicates, failures
+ const dup=D.duplicates.filter(d=>scope==="all"||d.a===scope||d.b===scope),T=x=>esc((D.portals.find(p=>p.project===x)||{title:x}).title);
+ $("t-dup").innerHTML=dup.length?tbl([["Portal"],["Also in"],["Ids","n"],["Same title","n"],["Example"]],dup.map(d=>[T(d.a),T(d.b),fmt(d.n),fmt(d.same_title),tenderLink(d.a,d.example)])):'<tr><td class="dim">none</td></tr>';
+ const fl=D.failures.filter(f=>scope==="all"||f.project===scope),agg=new Map();
+ fl.forEach(f=>{const k=(scope==="all"?"":f.project)+"|"+f.kind+"|"+f.reason;agg.set(k,(agg.get(k)||0)+f.n)});
+ const fr=[...agg].sort((a,b)=>b[1]-a[1]).slice(0,60).map(([k,n])=>{const [p,kind,reason]=k.split("|");return [kind==="tender"?"tender":"document",esc(reason),fmt(n)]});
+ $("t-fail").innerHTML=fr.length?tbl([["Kind"],["Reason"],["Count","n"]],fr):'<tr><td class="dim">none</td></tr>';
+}
+
+function heat(){
+ const sel=$("heatcheck"),c=D.checks.find(x=>x.id===sel.value)||D.checks[0];
+ const years=[...new Set(D.years.map(y=>y.year))].sort((a,b)=>a-b),Y=years.map(String);
+ const key=(p,y)=>p+"|"+y,M=new Map(D.years.map(y=>[key(y.project,y.year),y]));
+ let rows,val,head,extra;
+ if(scope==="all"){
+  const ps=D.portals.filter(p=>p.tenders>=1000&&p.checks[c.id][1]>0);rows=ps.map(p=>short(p.title));
+  val=(r,ci)=>{const y=M.get(key(ps[r].project,years[ci]));if(!y)return null;const [n,of]=y.checks[c.id];return of>=20?n/of:null};
+  head=(r,ci)=>`${ps[r].title}, ${years[ci]}`;extra=(r,ci)=>{const y=M.get(key(ps[r].project,years[ci]));const [n,of]=y.checks[c.id];return[`${fmt(n)} of ${fmt(of)} tenders`]};
+  $("h-heat").textContent="Where and when a problem occurs";$("l-heat").textContent=`Share of tenders failing "${c.label}", by portal and year of publication (cells with fewer than 20 tenders the check applies to are left blank). Pick another check on the right.`;
+  view($("s-heat"),$("c-heat"),()=>Hub.heat($("c-heat"),{rows,left:labW(rows,$("c-heat")),cols:Y,value:val,fmt:v=>pct(v),unit:"fail",head,extra,aria:"failure share by portal and year"}),
+   ()=>tbl([["Portal"],...Y.map(y=>[y,"n"])],ps.map((p,r)=>[esc(p.title),...years.map((_,ci)=>{const v=val(r,ci);return v==null?"":pct(v)})])));
+ }else{
+  const cks=D.checks.filter(x=>x.severity!=="info"&&P[scope].checks[x.id][0]>0);rows=cks.map(x=>x.label.length>34?x.label.slice(0,33)+"…":x.label);
+  val=(r,ci)=>{const y=M.get(key(scope,years[ci]));if(!y)return null;const [n,of]=y.checks[cks[r].id];return of>=20?n/of:null};
+  head=(r,ci)=>`${cks[r].label}, ${years[ci]}`;extra=(r,ci)=>{const [n,of]=M.get(key(scope,years[ci])).checks[cks[r].id];return[`${fmt(n)} of ${fmt(of)} tenders`]};
+  $("h-heat").textContent="Which problems, in which years";$("l-heat").textContent=`For ${P[scope].title}: share of tenders failing each error or warning check that fails at least once, by year of publication.`;
+  view($("s-heat"),$("c-heat"),()=>cks.length?Hub.heat($("c-heat"),{rows,left:labW(rows,$("c-heat")),cols:Y,value:val,fmt:v=>pct(v),unit:"fail",head,extra,aria:"failure share by check and year"}):($("c-heat").innerHTML='<div class="dim">no error or warning check fails for this portal</div>'),
+   ()=>tbl([["Check"],...Y.map(y=>[y,"n"])],cks.map((x,r)=>[esc(x.label),...years.map((_,ci)=>{const v=val(r,ci);return v==null?"":pct(v)})])));
+ }
+ sel.parentElement.style.display=scope==="all"?"":"none";
+}
+
+function fill(){
+ const F=D.fill_fields;
+ if(scope==="all"){
+  const ps=D.portals.filter(p=>p.real>=1000),fv=(r,c)=>rate(ps[r].fill[c],ps[r].real);
+  $("l-fill").textContent="Share of each portal's real tenders (those with a title) where the field is filled in. NA, Nil and 0 count as not filled. Light cells are fields a portal's buyers mostly leave out.";
+  view($("s-fill"),$("c-fill"),()=>Hub.heat($("c-fill"),{rows:ps.map(p=>short(p.title)),left:labW(ps.map(p=>short(p.title)),$("c-fill")),cols:D.fill_short||F,value:fv,fmt:v=>pct(v),unit:"filled",head:(r,c)=>`${ps[r].title}: ${F[c]}`,
+    extra:(r,c)=>[`${fmt(ps[r].fill[c])} of ${fmt(ps[r].real)} tenders`],aria:"field fill rate by portal"}),
+   ()=>tbl([["Portal"],...F.map(f=>[f,"n"])],ps.map((p,r)=>[esc(p.title),...F.map((_,c)=>pct(fv(r,c)))])));
+ }else{
+  const years=[...new Set(D.years.filter(y=>y.project===scope).map(y=>y.year))].sort((a,b)=>a-b),M=new Map(D.years.filter(y=>y.project===scope).map(y=>[y.year,y]));
+  const fv=(r,c)=>{const y=M.get(years[c]);return y&&y.real>=20?rate(y.fill[r],y.real):null};
+  $("l-fill").textContent=`For ${P[scope].title}: share of real tenders with each field filled in, by year of publication. NA, Nil and 0 count as not filled.`;
+  view($("s-fill"),$("c-fill"),()=>Hub.heat($("c-fill"),{rows:F,left:labW(F,$("c-fill")),cols:years.map(String),value:fv,fmt:v=>pct(v),unit:"filled",head:(r,c)=>`${F[r]}, ${years[c]}`,
+    extra:(r,c)=>{const y=M.get(years[c]);return[`${fmt(y.fill[r])} of ${fmt(y.real)} tenders`]},aria:"field fill rate by year"}),
+   ()=>tbl([["Field"],["All years","n"],...years.map(y=>[String(y),"n"])],F.map((f,r)=>[esc(f),pct(rate(P[scope].fill[r],P[scope].real)),...years.map((_,c)=>{const v=fv(r,c);return v==null?"":pct(v)})])));
+ }
+}
+
+function cov(list){
+ const st=(v,s,k)=>v.by_status[s]?.[k]||0;
+ $("t-cov").innerHTML=`<tr><th>Portal</th><th class="n">Counted</th><th class="n">Stored</th><th class="n">Coverage</th><th class="n">Windows done</th><th class="n">Short</th><th class="n">Missing in short</th><th class="n">Failed</th><th class="n">Parked</th><th class="n">Pending</th></tr>`+
+  list.filter(p=>p.coverage).map(p=>{const v=p.coverage;return `<tr><td>${esc(p.title)}</td><td class="n">${fmt(v.expected)}</td><td class="n">${fmt(p.tenders)}</td><td class="n">${bar(rate(v.stored_in_windows,v.expected),"ok",60)}</td>
+   <td class="n">${fmt(st(v,"done","windows"))}</td><td class="n">${fmt(v.short_windows)}</td><td class="n">${fmt(v.short_missing)}</td>
+   <td class="n">${st(v,"failed","windows")?`${fmt(st(v,"failed","windows"))} <span class="dim">(${fmt(st(v,"failed","expected"))})</span>`:"0"}</td>
+   <td class="n">${st(v,"parked","windows")?`${fmt(st(v,"parked","windows"))} <span class="dim">(${fmt(st(v,"parked","expected"))})</span>`:"0"}</td>
+   <td class="n">${fmt(st(v,"pending","windows")+st(v,"claimed","windows"))}</td></tr>`}).join("");
+ const sw=D.short_windows.filter(w=>scope==="all"||w.project===scope).slice(0,80),T=x=>esc(short((D.portals.find(p=>p.project===x)||{title:x}).title));
+ $("t-short").innerHTML=sw.length?tbl([["Portal"],["Organisation"],["Window"],["Counted","n"],["Stored","n"],["Missing","n"],["Tries","n"]],
+  sw.map(w=>[T(w.project),esc(w.org_name),esc(w.win_from+" – "+w.win_to),fmt(w.expected),fmt(w.stored),fmt(w.expected-w.stored),fmt(w.attempts)])):'<tr><td class="dim">none</td></tr>';
+ $("n-short").textContent=D.short_windows_total>D.short_windows.length?`Listing the ${fmt(D.short_windows.length)} biggest of ${fmt(D.short_windows_total)} short windows.`:"";
+}
+
+function docs(){
+ const rows=D.doc_years.filter(r=>scope==="all"||r.project===scope),M=new Map();
+ rows.forEach(r=>{const m=M.get(r.year)||{n:0,stored:0,refused:0,failed:0,unfetched:0};for(const k in m)m[k]+=r[k]||0;M.set(r.year,m)});
+ const ys=[...M.keys()].filter(y=>M.get(y).n>=50).sort((a,b)=>a-b),S=[["stored","Stored","--s1"],["refused","Refused by the portal","--s2"],["failed","Failed","--s4"],["unfetched","Never downloaded","--sx"]];
+ view($("s-docs"),$("c-docs"),()=>ys.length?Hub.bars($("c-docs"),{labels:ys.map(String),series:S.map(([k,l,c])=>({key:k,label:l,color:c})),values:(i,k)=>M.get(ys[i])[k],share:true,height:220,aria:"document outcomes by year"}):($("c-docs").innerHTML='<div class="dim">no documents listed</div>'),
+  ()=>tbl([["Year"],...S.map(s=>[s[1],"n"]),["Listed","n"]],ys.map(y=>{const m=M.get(y);return [y,...S.map(s=>fmt(m[s[0]])),fmt(m.n)]})));
+}
+
+j("/api/quality").then(d=>{D=d;d.portals.forEach(p=>P[p.project]=p);
+ $("scope").innerHTML=`<option value="all">All portals</option>`+d.portals.map(p=>`<option value="${esc(p.project)}">${esc(p.title)} (${fmt(p.tenders)})</option>`).join("");
+ $("heatcheck").innerHTML=["error","warn","info"].map(s=>`<optgroup label="${SEV[s]}">${d.checks.filter(c=>c.severity===s).map(c=>`<option value="${c.id}">${esc(c.label)}</option>`).join("")}</optgroup>`).join("");
+ const first=d.checks.filter(c=>c.severity!=="info").map(c=>({c,n:d.overall.checks[c.id][0]})).sort((a,b)=>b.n-a.n)[0];if(first)$("heatcheck").value=first.c.id;
+ const h=decodeURIComponent(location.hash.slice(1));if(P[h])scope=h;$("scope").value=scope;
+ $("built").textContent="checked "+new Date(d.built_at).toLocaleString();
+ $("foot").textContent=`Built from quality.facts (one typed row per stored tender, rebuilt from the hub's records), data as of ${new Date(d.facts_as_of).toLocaleString()}. Years are the publication year (or the tender id's year when no date could be read).`;
+ render()}).catch(e=>{if(e!==0)$("kpis").innerHTML=`<section class="dim">The quality numbers have not been built yet (scripts/ops/quality_facts.sql, then scripts/build_quality.py).</section>`});
+$("scope").addEventListener("change",e=>{scope=e.target.value;history.replaceState(null,"",scope==="all"?location.pathname:"#"+scope);render()});
+$("hidepass").addEventListener("change",render);
+$("heatcheck").addEventListener("change",heat);
+$("t-score").addEventListener("click",e=>{const tr=e.target.closest("tr[data-p]");if(!tr)return;scope=scope===tr.dataset.p?"all":tr.dataset.p;$("scope").value=scope;
+ history.replaceState(null,"",scope==="all"?location.pathname:"#"+scope);render();$("kpis").scrollIntoView({behavior:"smooth"})});
+</script></body></html>

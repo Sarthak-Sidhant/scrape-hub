@@ -1,0 +1,17 @@
+[Unit]
+Description=Refresh quality.facts and the numbers behind the /data/quality page
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=scrapehub
+WorkingDirectory=/opt/scrape-hub
+EnvironmentFile=/etc/scrape-hub/env
+# quality.facts lives in the postgres-owned quality schema; "+" runs this step as root, which hands it to postgres. Incremental after the
+# first build (only records stored or re-fetched since the last run are parsed again).
+ExecStartPre=+/usr/sbin/runuser -u postgres -- psql -d scrape_hub -v ON_ERROR_STOP=1 -q -f /opt/scrape-hub/scripts/ops/quality_facts.sql
+ExecStart=/opt/scrape-hub/.venv/bin/python scripts/build_quality.py
+TimeoutStartSec=4h
+Nice=10
+IOSchedulingClass=idle
+NoNewPrivileges=true

@@ -28,9 +28,11 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const kb=n=>n==null?"":Number(n).toLocaleString(undefined,{maximumFractionDigits:1});
 const tbl=(head,rows)=>rows.length?`<table><tr>${head.map(h=>`<th class="${h[1]||""}">${esc(h[0])}</th>`).join("")}</tr>${rows.map(r=>`<tr>${r.map((c,i)=>`<td class="${head[i][1]||""}">${c}</td>`).join("")}</tr>`).join("")}</table>`:`<div class="dim">none</div>`;
+// ?project=gepnic-<portal> looks in that portal's tenders (the data-quality page links examples this way); default: eprocure.gov.in
+const PROJECT=new URLSearchParams(location.search).get("project")||"";
 async function look(q){
  $("msg").textContent="looking up...";
- const r=await fetch("/api/tender?q="+encodeURIComponent(q));if(r.status===401){location="/login";return}
+ const r=await fetch("/api/tender?q="+encodeURIComponent(q)+(PROJECT?"&project="+encodeURIComponent(PROJECT):""));if(r.status===401){location="/login";return}
  const d=await r.json();$("matches").innerHTML=d.matches.length>1?d.matches.map(m=>`<a href="#${esc(m)}" data-id="${esc(m)}">${esc(m)}</a>`).join(""):"";
  if(!d.tender){$("msg").textContent=q.length<4?"type at least 4 characters of the id":"no stored tender starts with that";$("out").innerHTML="";return}
  const t=d.tender,s=t.sections;$("msg").textContent=d.matches.length>1?`${d.matches.length}${d.matches.length===20?"+":""} tenders start with that; showing ${t.record_id}`:"";

@@ -1,9 +1,12 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex"><title>Scrape hub: data</title><link rel="stylesheet" href="/assets/hub.css"><style>
-.rank td:first-child{color:var(--dim);width:28px}.org{max-width:420px;white-space:normal}
+.rank td:first-child{color:var(--dim);width:28px}
+.tabs{display:flex;gap:4px;flex-wrap:wrap}.tabs a{padding:4px 12px;border:1px solid var(--line);border-radius:8px;text-decoration:none;color:var(--dim);font-size:12px}
+.tabs a[aria-current=page]{color:var(--text);background:var(--panel2);font-weight:700}.org{max-width:420px;white-space:normal}
 </style></head><body>
 <header><h1>DATA</h1><!--NAV--><span class="sp"></span><span class="dim" id="built">loading</span></header>
 <main>
+<nav class="tabs" aria-label="data views"><a href="/data" aria-current="page">What the data says</a><a href="/data/quality">Data quality</a></nav>
 <div class="kpis" id="kpis"></div>
 
 <section id="s-years"><div class="head"><div><h2>Tenders per year, by where they are now</h2>
