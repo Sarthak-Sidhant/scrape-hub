@@ -5,7 +5,7 @@ Tables (schema eprocure, owned by postgres, readable by scrape_hub):
   bidders       one row per distinct bidder: `key` (lowercase, letters and digits only, "M/s" and trailing Pvt/Ltd/LLP dropped, so
                 "M/S eMudhra Limited" and "EMUDHRA LTD." are one bidder), `name` (the spelling first seen)
   bid_index     one row per bid (pid, tender_id, bidder_id, bidder_name as written, status_id, flags, awarded_value, bid_number);
-                flags: 1 = in the bid list, 2 = winner (winners / AOC award list), 4 = L1. A winner missing from the bid list gets a row with flag 2
+                flags: 1 = in the bid list, 2 = winner (winners / AOC award list / bid status Accepted-AOC), 4 = L1. A winner missing from the bid list gets a row with flag 2
   bidder_stats  per bidder: tenders, bids, wins, L1s, first and last year (rebuilt after each build or refresh)
   bid_projects, bid_statuses   small lookups for pid and status_id
   bid_index_meta               build cursor and the refresh watermark
@@ -140,7 +140,8 @@ def rows_for(w, ids, pid, rid, bids, winners, winner, l1, awarded):
             continue
         k = key_of(name)
         seen.add(k)
-        flags = 1 | (2 if k in wins else 0) | (4 if l1k and k == l1k else 0)
+        won = k in wins or (b.get("status") or "").replace(" ", "").lower() == "accepted-aoc"     # the central portal shows its winner only this way
+        flags = 1 | (2 if won else 0) | (4 if l1k and k == l1k else 0)
         out.append((pid, rid, bid_, " ".join(name.split()), ids.status_id(w, b.get("status")), flags, wins.get(k), b.get("bid_number")))
     extra = [(n, 2) for n in (winners or []) + [winner] + [a.get("bidder") for a in awarded or []] if n]
     if l1:
