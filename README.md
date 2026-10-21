@@ -39,7 +39,7 @@ Background jobs (systemd timers, all as the `scrapehub` user):
 | `scrape-hub-probe` (every minute) | `scripts/probe.py`: checks the runner targets (`PROBE_TARGETS`, used for the runners' auto-hold) and every portal in the registry (`gepnic:<portal>`) |
 | `scrape-hub-ramp` (03:45 and 15:15 IST) | `scripts/ramp.py`: raises 1, 4, 8, 16 parallel workers per portal server and records where it slows down (table `capacity`); skips servers our runners are scraping |
 | `scrape-hub-showcase` (05:00) | rebuilds `eprocure.tender_index`, `eprocure.tender_facts` (`scripts/ops/*.sql`, as postgres) and the `/data` numbers (`scripts/build_showcase.py`, table `showcase`) |
-| `scrape-hub-backup` (03:30) | `pg_dump` to object storage |
+| `scrape-hub-backup` (03:30) | `pg_dump` to object storage, without the derived `eprocure` and `quality` schemas (the showcase and quality timers rebuild them; both wait for the backup to finish) |
 
 ## Tender bundles
 

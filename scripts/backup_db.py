@@ -26,7 +26,10 @@ def main():
     try:
         name = "scrape_hub-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S") + ".dump"
         path = os.path.join(work, name)
-        subprocess.run(["pg_dump", "--format=custom", "--no-owner", "--file", path, os.environ["DATABASE_URL"]], check=True)
+        # the eprocure and quality schemas are derived from `records` and rebuilt every morning (scrape-hub-showcase, scrape-hub-quality):
+        # leaving them out keeps ~9 GB out of every dump and shortens the snapshot that blocks those rebuilds
+        subprocess.run(["pg_dump", "--format=custom", "--no-owner", "--exclude-schema=eprocure", "--exclude-schema=quality",
+                        "--file", path, os.environ["DATABASE_URL"]], check=True)
         size = os.path.getsize(path)
         s3.upload_file(path, bucket, PREFIX + name)
         got = s3.head_object(Bucket=bucket, Key=PREFIX + name)["ContentLength"]
