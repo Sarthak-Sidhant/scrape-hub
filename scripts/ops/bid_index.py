@@ -51,7 +51,7 @@ def key_of(name: str) -> str:
     words = re.findall(r"[a-z0-9]+", s)
     while len(words) > 1 and (words[-1] in SUFFIX or words[-1] == "and"):
         words.pop()
-    return "".join(words)
+    return "".join(words)[:200]                      # a few portals put whole paragraphs in the name field; a btree key must stay small
 
 
 def num(v):
@@ -115,7 +115,7 @@ class Ids:
             return None
         if k not in self.bidder:
             self.bidder[k] = self.next_bidder
-            self.new_bidders.append((self.next_bidder, k, " ".join(name.split())))
+            self.new_bidders.append((self.next_bidder, k, " ".join(name.split())[:500]))
             self.next_bidder += 1
         return self.bidder[k]
 
