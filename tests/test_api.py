@@ -333,9 +333,9 @@ def test_auto_backoff_halves_threads_when_target_pushes_back(client, clean, logi
     h = hdr()
     rid = start(client, project="backoff")
     login.post("/api/projects/backoff/settings", json={"threads": 8, "delay_ms": 0, "auto_backoff": True})
-    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [], "metrics": {"http_429": 6}}, headers=h)
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [], "metrics": {"http_429": 21}}, headers=h)
     eff = client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
-    assert eff["throttled"] is True and eff["threads"] == 4 and eff["delay_ms"] == 500 and "refusals" in eff["reason"]
+    assert eff["throttled"] is True and eff["threads"] == 4 and eff["delay_ms"] == 200 and "refusals" in eff["reason"]
     # turning auto-backoff off honours the saved speed even under pushback
     login.post("/api/projects/backoff/settings", json={"threads": 8, "delay_ms": 0, "auto_backoff": False})
     eff = client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
@@ -350,8 +350,8 @@ def test_auto_backoff_on_dropped_connections(client, clean, login):
     # a few dropped connections among many records is normal (B2: 48 in 9,600 tenders)
     client.post(f"/api/v1/runs/{rid}/batches", json={"records": recs, "metrics": {"http_error": 25}}, headers=h)
     assert client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]["throttled"] is False
-    # drops outnumbering half the records means the target is cutting us off
-    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [], "metrics": {"http_error": 60}}, headers=h)
+    # drops outnumbering the records means the target is cutting us off
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [], "metrics": {"http_error": 120}}, headers=h)
     eff = client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
     assert eff["throttled"] is True and eff["threads"] == 8 and "dropped connections" in eff["reason"]
 
@@ -359,7 +359,7 @@ def test_auto_backoff_on_dropped_connections(client, clean, login):
 def test_auto_backoff_on_block_ratio(client, clean, login):
     h = hdr()
     rid = start(client, project="blocky")
-    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [{"record_id": str(i), "data": {}} for i in range(8)], "blocked": 4}, headers=h)
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [{"record_id": str(i), "data": {}} for i in range(16)], "blocked": 8}, headers=h)
     eff = client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
     assert eff["throttled"] is True and eff["threads"] == 2
 
@@ -605,7 +605,7 @@ def test_min_threads_floor_holds_under_backoff_but_not_through_an_outage(client,
     with db.conn() as c:
         c.execute("UPDATE projects SET settings = settings || '{\"probe\": \"site\", \"min_threads\": 20}'::jsonb WHERE name='floored'")
     beat = lambda: client.post(f"/api/v1/runs/{rid}/heartbeat", json={}, headers=h).json()["settings"]
-    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [], "metrics": {"http_429": 9}}, headers=h)
+    client.post(f"/api/v1/runs/{rid}/batches", json={"records": [], "metrics": {"http_429": 21}}, headers=h)
     eff = beat()
     assert eff["throttled"] is True and eff["threads"] == 20 and eff["delay_ms"] == 0 and eff["paused"] is False   # 32 // 2 = 16 would be below the floor
     with db.conn() as c:
@@ -799,12 +799,14 @@ def test_throttle_step_moves_threads_and_windows_within_the_phase():
     ad = {"max_windows": 40}
     assert adapt_step("peak", ad, 4, 6, 0.8, 0, 0)[:2] == (6, 10)          # quick: +2 threads, +4 windows
     assert adapt_step("peak", ad, 4, 20, 0.8, 0, 0)[:2] == (6, 25)         # bigger, still far below the cap: a quarter more windows
-    assert adapt_step("peak", ad, 4, 24, 0.8, 0, 0)[:2] == (6, 26)         # at 60% of the cap: gently, +2
+    assert adapt_step("peak", ad, 4, 24, 0.8, 0, 0)[:2] == (6, 28)         # at 60% of the cap: +4
     assert adapt_step("day", ad, 4, 6, 0.8, 0, 0)[:2] == (6, 10)           # the day runs flat out too
     assert adapt_step("peak", ad, 15, 39, 0.8, 0, 0)[:2] == (16, 40)       # up to the ceilings
-    assert adapt_step("peak", ad, 8, 12, 4.0, 0, 0)[:2] == (7, 10)         # above the 3 s target: ease off
-    assert adapt_step("peak", ad, 8, 12, 7.0, 0, 0)[:2] == (4, 6)          # over twice the target: halve both
-    assert adapt_step("peak", ad, 8, 12, 0.8, 0, 0.25)[:2] == (4, 6)       # searches failing: halve even if answers look quick
+    assert adapt_step("peak", ad, 8, 12, 5.0, 0, 0)[:2] == (7, 10)         # above the 4 s target: ease off
+    assert adapt_step("peak", ad, 8, 12, 4.0, 0, 0)[:2] == (8, 12)         # at the target: hold
+    assert adapt_step("peak", ad, 8, 12, 11.0, 0, 0)[:2] == (6, 8)         # over 2.5x the target: cut both by a third
+    assert adapt_step("peak", ad, 8, 12, 0.8, 0, 0.25)[:2] == (6, 8)       # searches failing: cut even if answers look quick
+    assert adapt_step("peak", ad, 8, 12, 0.8, 0.06, 0)[:2] == (10, 16)     # 6% dropped is tolerated now (the line is 8%)
     assert adapt_step("peak", ad, 1, 1, 9.0, 0, 0)[:2] == (1, 1)           # never below one thread and one window
     assert adapt_step("peak", ad, 8, 12, None, 0, 0)[:2] == (8, 12)        # too little traffic: leave it
     assert adapt_step("day", {"max_windows": 20, "day": {"target_s": 1.0}}, 8, 12, 1.5, 0, 0)[:2] == (7, 10)   # per-project override
@@ -849,7 +851,7 @@ def test_throttle_resets_a_down_portal_to_the_bottom(client, clean):
         st = c.execute("SELECT settings FROM projects WHERE name='downsite'").fetchone()["settings"]
         whys = [r["reason"] for r in c.execute("SELECT reason FROM adjustments").fetchall()]
     assert (st["threads"], st["max_claimed"]) == (1, 1) and any("is down" in w for w in whys)
-    assert st["adaptive"]["max_windows"] == 9                          # it fell at 14 windows: the cap is now 70% of that
+    assert st["adaptive"]["max_windows"] == 11                         # it fell at 14 windows: the cap is now 80% of that
 
 
 def test_projects_marked_b2_upload_to_backblaze_others_to_r2(client, clean):
@@ -896,14 +898,14 @@ def test_a_portal_that_falls_at_a_high_level_gets_a_lower_learned_cap(client, cl
         adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 1, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
         st = c.execute("SELECT settings FROM projects WHERE name='learn'").fetchone()["settings"]
         reasons = [r["reason"] for r in c.execute("SELECT reason FROM adjustments ORDER BY at").fetchall()]
-    assert st["adaptive"]["max_windows"] == 30 and (st["threads"], st["max_claimed"]) == (1, 1)     # 70% of the 44 it fell at
+    assert st["adaptive"]["max_windows"] == 35 and (st["threads"], st["max_claimed"]) == (1, 1)     # 80% of the 44 it fell at
     assert any("went down at 44 windows" in r for r in reasons)
 
 
-def test_climb_is_gentle_near_the_ceiling():
+def test_climb_keeps_going_near_the_ceiling():
     from scrape_hub.app import adapt_step
     assert adapt_step("peak", {"max_windows": 40}, 8, 12, 0.8, 0, 0)[:2] == (10, 16)      # far below: +4 (or a quarter)
-    assert adapt_step("peak", {"max_windows": 40}, 8, 30, 0.8, 0, 0)[:2] == (10, 32)      # above 60% of the cap: +2
+    assert adapt_step("peak", {"max_windows": 40}, 8, 30, 0.8, 0, 0)[:2] == (10, 34)      # above 60% of the cap: +4 too
 
 
 def test_a_portal_that_chokes_without_going_down_gets_a_softer_learned_cap(client, clean):
@@ -912,12 +914,12 @@ def test_a_portal_that_chokes_without_going_down_gets_a_softer_learned_cap(clien
     rid = start(client, project="choke")
     with db.conn() as c:
         c.execute("""UPDATE projects SET settings = '{"threads": 16, "max_claimed": 32, "adaptive": {"max_windows": 32}}' WHERE name='choke'""")
-        c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,'choke','n_http',200), (%s,'choke','t_http_s',1400)", (rid, rid))
+        c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,'choke','n_http',200), (%s,'choke','t_http_s',2200)", (rid, rid))
     with db.conn() as c:
         adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 2, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
         st = c.execute("SELECT settings FROM projects WHERE name='choke'").fetchone()["settings"]
         reasons = [r["reason"] for r in c.execute("SELECT reason FROM adjustments ORDER BY at").fetchall()]
-    assert (st["threads"], st["max_claimed"], st["adaptive"]["max_windows"]) == (8, 16, 25)     # halved, and the cap is 80% of 32
+    assert (st["threads"], st["max_claimed"], st["adaptive"]["max_windows"]) == (11, 22, 28)    # cut by a third, and the cap is 90% of 32
     assert any("choked at 32 windows" in r for r in reasons)
 
 
@@ -955,18 +957,18 @@ def _adapt_once(project, settings, n_http, t_http_s, minute):
 
 def test_a_slow_minute_far_below_the_ceiling_does_not_lower_it(client, clean):
     start(client, project="blip")
-    st = _adapt_once("blip", {"threads": 16, "max_claimed": 12, "adaptive": {"max_windows": 32}}, 200, 1400, 0)
-    assert (st["max_claimed"], st["adaptive"]["max_windows"]) == (6, 32)        # halved, ceiling untouched
+    st = _adapt_once("blip", {"threads": 16, "max_claimed": 12, "adaptive": {"max_windows": 32}}, 200, 2200, 0)
+    assert (st["max_claimed"], st["adaptive"]["max_windows"]) == (8, 32)        # cut by a third, ceiling untouched
 
 
 def test_a_fast_portal_at_its_ceiling_earns_a_higher_one(client, clean):
     from scrape_hub.app import CAP_CEILING
     start(client, project="fast")
     st = _adapt_once("fast", {"threads": 16, "max_claimed": 32, "adaptive": {"max_windows": 32}}, 200, 100, 0)
-    for m in range(1, 10):
+    for m in range(1, 5):
         assert st["adaptive"]["max_windows"] == 32
         st = _adapt_once("fast", None, 200, 100, m)
-    assert st["adaptive"]["max_windows"] == 36 and st["adaptive"]["healthy_min"] == 0     # 10 healthy minutes at 0.5 s: +4
+    assert st["adaptive"]["max_windows"] == 36 and st["adaptive"]["healthy_min"] == 0     # 5 healthy minutes at 0.5 s: +4
     st = _adapt_once("fast", {**st, "max_claimed": CAP_CEILING, "adaptive": {"max_windows": CAP_CEILING, "healthy_min": 9}}, 200, 100, 20)
     assert st["adaptive"]["max_windows"] == CAP_CEILING                          # never above the ceiling
 
@@ -1021,9 +1023,9 @@ def test_a_portal_is_not_raised_back_to_where_it_fell(client, clean):
     st = _adapt_once("wall", {"threads": 16, "max_claimed": 28, "adaptive": {"max_windows": 28, "fell_at": 30, "fell_at_t": now, "healthy_min": 9}}, 200, 100, 0)
     assert st["adaptive"]["max_windows"] == 28                     # roof is 30 - 2 = 28: no raise
     st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "fell_at_t": now, "healthy_min": 9}}, 200, 100, 1)
-    assert st["adaptive"]["max_windows"] == 26                     # it fell recently: +2 even at 0.5 s
+    assert st["adaptive"]["max_windows"] == 28                     # +4, but never past the roof
     st = _adapt_once("wall", {"threads": 16, "max_claimed": 24, "adaptive": {"max_windows": 24, "fell_at": 30, "fell_at_t": now, "healthy_min": 9}}, 200, 300, 2)
-    assert st["adaptive"]["max_windows"] == 26
+    assert st["adaptive"]["max_windows"] == 28
     st = _adapt_once("wall", {"threads": 16, "max_claimed": 28, "adaptive": {"max_windows": 28, "fell_at": 30, "fell_at_t": now - 4 * 3600, "healthy_min": 9}}, 200, 100, 3)
     assert st["adaptive"]["max_windows"] == 32                     # the fall was 4 hours ago: the roof no longer applies
 
@@ -1163,10 +1165,10 @@ def test_a_portal_back_from_an_outage_resumes_at_half_its_level(client, clean):
             c.execute("INSERT INTO queue (project, key, partition_id, status, payload, claimed_by, claimed_at) VALUES ('resume', %s, 0, 'claimed', '{}', %s, now())", (f"w{i}", rid))
         for _ in range(3):
             c.execute("INSERT INTO probes (target, ok, ms) VALUES ('gepnic:r.gov.in', false, 20000)")
-    with db.conn() as c:                                                  # down at 20 in use: cap 30 -> 14 (70%), resume at half of that, 7
+    with db.conn() as c:                                                  # down at 20 in use: cap 30 -> 16 (80%), resume at half of that, 8
         adapt_speeds(c, now=datetime.datetime(2026, 10, 21, 1, 0, tzinfo=ist))
         st = c.execute("SELECT settings FROM projects WHERE name='resume'").fetchone()["settings"]
-    assert (st["max_claimed"], st["threads"]) == (1, 1) and st["adaptive"]["resume_to"] == 7
+    assert (st["max_claimed"], st["threads"]) == (1, 1) and st["adaptive"]["resume_to"] == 8
     with db.conn() as c:                                                  # back: two good checks, fast answers
         c.execute("INSERT INTO probes (target, ok, ms, at) VALUES ('gepnic:r.gov.in', true, 300, now()), ('gepnic:r.gov.in', true, 300, now())")
         c.execute("DELETE FROM metrics WHERE project='resume'")
@@ -1174,4 +1176,4 @@ def test_a_portal_back_from_an_outage_resumes_at_half_its_level(client, clean):
     with db.conn() as c:
         adapt_speeds(c, now=datetime.datetime(2026, 10, 21, 1, 5, tzinfo=ist))
         st = c.execute("SELECT settings FROM projects WHERE name='resume'").fetchone()["settings"]
-    assert st["max_claimed"] == 7 and st["threads"] == 16 and "resume_to" not in st["adaptive"]
+    assert st["max_claimed"] == 8 and st["threads"] == 16 and "resume_to" not in st["adaptive"]

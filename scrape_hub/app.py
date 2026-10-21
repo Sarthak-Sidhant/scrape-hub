@@ -27,9 +27,12 @@ WEB = Path(__file__).resolve().parent.parent / "web"
 # threads/windows: ceilings, windows as a share of the project's night window cap.
 # Since 20 Oct 2026 every band runs flat out ("max scraping whenever capacity is there"): the throttle's own reactions to slow answers,
 # failing searches and outages are what hold a portal back, not the clock. Per-project overrides (settings.adaptive.<band>) still work.
-_HAMMER = {"target_s": 3.0, "up": (2, 4), "down": (1, 2), "threads": 16, "windows": 1.0}
+# 22 Oct 2026, loosened at Sarthak's ask ("raise windows, make the throttle a bit loose"): aim for 4 s (was 3), cut a third (was half) only
+# past 2.5x that or 8% dropped (was 2x / 5%), climb +4 near the ceiling (was +2), raise ceilings after 5 healthy minutes (was 10), learn 90% /
+# 80% of a choke / outage level (was 80 / 70) and forget it after 1 hour (was 3).
+_HAMMER = {"target_s": 4.0, "up": (2, 4), "down": (1, 2), "threads": 16, "windows": 1.0}
 PHASES = {"peak": dict(_HAMMER), "shoulder": dict(_HAMMER), "day": dict(_HAMMER)}
-FELL_MEMORY_S = 3 * 3600   # how long a portal's fall level keeps raises below it
+FELL_MEMORY_S = 3600       # how long a portal's fall level keeps raises below it
 CAP_CEILING = 40      # the highest window cap the throttle raises a healthy portal to (big state portals fell over at 44-48, 2026-10-19)
 
 
@@ -51,14 +54,14 @@ def adapt_step(phase, ad, threads, windows, sec, err_frac, fail_frac):
         return min(threads, t_hi), min(windows, w_hi), f"{phase}: ceilings are {t_hi} threads, {w_hi} windows"
     if sec is None:
         return threads, windows, "too little traffic to judge"
-    if sec > 2 * target or err_frac > 0.05 or fail_frac > 0.10:
-        bits = [f"{sec:.1f} s per request"] + ([f"{err_frac:.0%} dropped"] if err_frac > 0.05 else []) + ([f"{fail_frac:.0%} of searches/windows failing"] if fail_frac > 0.10 else [])
-        return max(t_lo, threads // 2), max(w_lo, windows // 2), f"{phase}: {', '.join(bits)}: halve"
+    if sec > 2.5 * target or err_frac > 0.08 or fail_frac > 0.15:
+        bits = [f"{sec:.1f} s per request"] + ([f"{err_frac:.0%} dropped"] if err_frac > 0.08 else []) + ([f"{fail_frac:.0%} of searches/windows failing"] if fail_frac > 0.15 else [])
+        return max(t_lo, threads - max(1, threads // 3)), max(w_lo, windows - max(1, windows // 3)), f"{phase}: {', '.join(bits)}: halve"
     if sec > target:
         return max(t_lo, threads - dn_t), max(w_lo, windows - dn_w), f"{phase}: {sec:.1f} s per request, above {target} s: ease off"
     if sec < 0.7 * target:
         # climb fast while far below the ceiling (a quarter more windows), gently near it (+2): portals fall over without slowing first
-        step = max(up_w, windows // 4) if windows < 0.6 * w_hi else min(up_w, 2)
+        step = max(up_w, windows // 4) if windows < 0.6 * w_hi else up_w
         return min(t_hi, threads + up_t), min(w_hi, windows + step), f"{phase}: {sec:.1f} s per request, well under {target} s: more"
     return threads, windows, f"{phase}: {sec:.1f} s per request: holding"
 
@@ -129,8 +132,8 @@ def adapt_speeds(c, now=None):
             # windows open now are lower only because it was being halved; 2026-10-21 Kerala choked at 38, went down at 19)
             if ad.get("fell_at_t") and now.timestamp() - float(ad["fell_at_t"]) < 600:
                 windows = 0
-            if windows >= 8 and windows * 0.7 < cap:
-                learned = max(4, int(windows * 0.7))
+            if windows >= 8 and windows * 0.8 < cap:
+                learned = max(4, int(windows * 0.8))
                 c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (learned, p["name"]))
                 remember_fall(c, p["name"], ad, windows)
                 c.execute("""INSERT INTO adjustments (project, threads_from, threads_to, claimed_from, claimed_to, phase, reason)
@@ -185,14 +188,14 @@ def adapt_speeds(c, now=None):
             elif now.timestamp() - float(ad.get("resume_t") or 0) > 1800:
                 c.execute("UPDATE projects SET settings = settings #- '{adaptive,resume_to}' #- '{adaptive,resume_t}' WHERE name=%s", (p["name"],))
         cap = int(ad.get("max_windows", 24))
-        overloaded = sec is not None and (sec > 2 * float({**PHASES[phase], **(ad.get(phase) or {})}["target_s"]) or (e / n if n else 0.0) > 0.05)
+        overloaded = sec is not None and (sec > 2.5 * float({**PHASES[phase], **(ad.get(phase) or {})}["target_s"]) or (e / n if n else 0.0) > 0.08)
         # only real overload (slow answers or dropped connections) teaches a lower limit; failing windows alone just halve for now
-        if why.endswith(": halve") and overloaded and windows >= 8 and windows >= 0.75 * cap and int(windows * 0.8) < cap \
+        if why.endswith(": halve") and overloaded and windows >= 8 and windows >= 0.75 * cap and int(windows * 0.9) < cap \
                 and nic_wide_outage(c) < NIC_WIDE_PORTALS:
             # it choked at (or near) its ceiling without going down (e.g. West Bengal at 32 windows: 4 s per request, 10% dropped): that level
             # is too much, so the ceiling becomes 80% of it (never below 8). Only near the ceiling: a slow minute far below it says nothing
             # about the ceiling (2026-10-20: learning from any halve ratcheted a dozen healthy portals down to 8-12 in an hour).
-            learned = max(8, int(windows * 0.8))
+            learned = max(8, int(windows * 0.9))
             c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (learned, p["name"]))
             remember_fall(c, p["name"], ad, windows)
             c.execute("""INSERT INTO adjustments (project, threads_from, threads_to, claimed_from, claimed_to, phase, reason)
@@ -209,13 +212,13 @@ def adapt_speeds(c, now=None):
         # ...for FELL_MEMORY_S after the fall: one bad moment (a 17:00 bid-deadline rush) must not cap a portal for the rest of the crawl
         fell_fresh = ad.get("fell_at") and time.time() - float(ad.get("fell_at_t") or 0) < FELL_MEMORY_S
         roof = min(CAP_CEILING, int(ad["fell_at"]) - 2) if fell_fresh else CAP_CEILING
-        if streak >= 10 and cap < roof:
+        if streak >= 5 and cap < roof:
             # a portal answering in under a second climbs faster, unless it fell on its own recently: then it nears the edge slowly
-            raised = min(roof, cap + (4 if sec < 1.0 and not fell_fresh else 2))
+            raised = min(roof, cap + 4)
             c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,max_windows}', to_jsonb(%s::int)) WHERE name=%s", (raised, p["name"]))
             c.execute("""INSERT INTO adjustments (project, s_per_req, requests, errors, threads_from, threads_to, claimed_from, claimed_to, phase, failed_frac, reason)
                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (p["name"], sec, int(n), int(e), threads, nt, windows, nw, phase, fail_frac,
-                                                                         f"10 healthy minutes at the ceiling ({sec:.1f} s per request): window cap {cap} -> {raised}"))
+                                                                         f"5 healthy minutes at the ceiling ({sec:.1f} s per request): window cap {cap} -> {raised}"))
             streak = 0
         c.execute("UPDATE projects SET settings = jsonb_set(settings, '{adaptive,healthy_min}', to_jsonb(%s::int)) WHERE name=%s", (streak, p["name"]))
         c.execute("""UPDATE projects SET settings = settings || jsonb_build_object('threads', %s::int, 'max_claimed', %s::int, 'adaptive_at', %s::float8,
@@ -464,9 +467,9 @@ def effective_settings_now(c, project: str) -> dict:
         e = c.execute("""SELECT coalesce(sum(value),0) AS n FROM metrics WHERE project=%s AND name='http_error'
                          AND at > now() - interval '3 minutes'""", (project,)).fetchone()
         b, r, n, drops = int(w["b"]), int(w["r"]), float(m["n"]), float(e["n"])
-        dropping = drops >= 20 and drops > 0.5 * r      # dropped connections: roughly 8% of requests (a tender takes ~6)
-        if (b + r >= 10 and b / max(1, b + r) > 0.10) or n >= 5 or dropping:
-            eff.update(threads=max(1, saved["threads"] // 2, min(floor, saved["threads"])), delay_ms=saved["delay_ms"] if floor else max(saved["delay_ms"], 500),
+        dropping = drops >= 40 and drops > r            # dropped connections: roughly 15% of requests (a tender takes ~6)
+        if (b + r >= 20 and b / max(1, b + r) > 0.25) or n >= 20 or dropping:
+            eff.update(threads=max(1, saved["threads"] // 2, min(floor, saved["threads"])), delay_ms=saved["delay_ms"] if floor else max(saved["delay_ms"], 200),
                        throttled=True, reason=f"{b} blocked, {int(n)} refusals and {int(drops)} dropped connections in the last 3 minutes")
     return eff
 
@@ -899,7 +902,7 @@ def claim(run_id: int, body: Claim, request: Request, who: Caller = Depends(call
                      AND claimed_at < now() - make_interval(secs => %(after)s)
                    ORDER BY claimed_at, key LIMIT %(limit)s FOR UPDATE SKIP LOCKED)
                RETURNING key, payload, attempts"""
-        if not rows and body.steal and body.retry_failed and not settings["throttled"]:
+        if not rows and body.steal and body.retry_failed and not settings.get("paused"):
             # every window has been tried once: try the failed ones again, but not while the target is down or being throttled
             after = int(settings["retry_after_s"]) if settings.get("retry_after_s") is not None else RETRY_AFTER_S   # per project (0 = at once)
             rows = c.execute(retry_sql, {**args, "max": RETRY_MAX_ATTEMPTS, "after": after}).fetchall()
