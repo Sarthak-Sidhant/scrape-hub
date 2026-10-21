@@ -157,7 +157,16 @@ def adapt_speeds(c, now=None):
         nt, nw, why = adapt_step(phase, ad, threads, windows, sec, e / n if n else 0.0, fail_frac)
         if ad.get("resume_to"):
             ph = {**PHASES[phase], **(ad.get(phase) or {})}
-            if sec is not None and sec < float(ph["target_s"]) and (e / n if n else 0.0) < 0.05:
+            # judge the comeback on the last 90 s only: requests that hung through the outage finish when it ends and report 20-70 s,
+            # which held the 3-minute average up for ~4 minutes after the portal was answering well (2026-10-21: UP 07:43 -> 07:47)
+            r = c.execute("""SELECT coalesce(sum(value) FILTER (WHERE name='n_http'), 0) AS n, coalesce(sum(value) FILTER (WHERE name='t_http_s'), 0) AS t,
+                                    coalesce(sum(value) FILTER (WHERE name='http_error'), 0) AS e
+                             FROM metrics WHERE project=%s AND name IN ('n_http', 't_http_s', 'http_error') AND at > now() - interval '90 seconds'""",
+                          (p["name"],)).fetchone()
+            rn = float(r["n"])
+            rsec, rerr = (float(r["t"]) / rn, float(r["e"]) / rn) if rn >= 10 else (sec, e / n if n else 0.0)
+            if rsec is not None and rsec < float(ph["target_s"]) and rerr < 0.05:
+                sec = rsec
                 # back up and answering well: straight back to half its pre-outage level with full threads
                 rw = min(int(ad["resume_to"]), int(ad.get("max_windows", 24)))
                 if rw > nw:
