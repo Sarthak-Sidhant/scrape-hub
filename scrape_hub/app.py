@@ -190,8 +190,11 @@ def adapt_speeds(c, now=None):
         cap = int(ad.get("max_windows", 24))
         overloaded = sec is not None and (sec > 2.5 * float({**PHASES[phase], **(ad.get(phase) or {})}["target_s"]) or (e / n if n else 0.0) > 0.08)
         # only real overload (slow answers or dropped connections) teaches a lower limit; failing windows alone just halve for now
+        # once per incident: cuts are a third now, so a portal still struggling a minute later is still near its (already lowered) cap;
+        # learning again each minute ratcheted West Bengal 28 -> 25 -> 17 -> 11 -> 8 in four minutes (2026-10-22 05:05-05:09)
+        same_incident = ad.get("fell_at_t") and now.timestamp() - float(ad["fell_at_t"]) < 600
         if why.endswith(": halve") and overloaded and windows >= 8 and windows >= 0.75 * cap and int(windows * 0.9) < cap \
-                and nic_wide_outage(c) < NIC_WIDE_PORTALS:
+                and not same_incident and nic_wide_outage(c) < NIC_WIDE_PORTALS:
             # it choked at (or near) its ceiling without going down (e.g. West Bengal at 32 windows: 4 s per request, 10% dropped): that level
             # is too much, so the ceiling becomes 80% of it (never below 8). Only near the ceiling: a slow minute far below it says nothing
             # about the ceiling (2026-10-20: learning from any halve ratcheted a dozen healthy portals down to 8-12 in an hour).

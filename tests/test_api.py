@@ -955,6 +955,14 @@ def _adapt_once(project, settings, n_http, t_http_s, minute):
         return c.execute("SELECT settings FROM projects WHERE name=%s", (project,)).fetchone()["settings"]
 
 
+def test_a_choke_teaches_a_lower_cap_once_not_every_minute(client, clean):
+    start(client, project="ratchet")
+    st = _adapt_once("ratchet", {"threads": 6, "max_claimed": 28, "adaptive": {"max_windows": 28}}, 200, 2200, 0)
+    assert st["adaptive"]["max_windows"] == 25 and st["max_claimed"] == 19         # choked at 28: cap 90%, cut by a third
+    st = _adapt_once("ratchet", None, 200, 2200, 1)
+    assert st["adaptive"]["max_windows"] == 25 and st["max_claimed"] == 13         # still struggling a minute later: cut, but learn nothing
+
+
 def test_a_slow_minute_far_below_the_ceiling_does_not_lower_it(client, clean):
     start(client, project="blip")
     st = _adapt_once("blip", {"threads": 16, "max_claimed": 12, "adaptive": {"max_windows": 32}}, 200, 2200, 0)
