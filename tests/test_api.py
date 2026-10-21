@@ -1094,6 +1094,30 @@ def test_an_outage_during_a_nic_wide_problem_teaches_nothing(client, clean):
     assert st["max_claimed"] == 1 and st["adaptive"]["max_windows"] == 30 and "fell_at" not in st["adaptive"]   # held, nothing learned
 
 
+def test_portals_choking_count_towards_a_nic_wide_problem(client, clean):
+    import datetime
+    from scrape_hub.app import adapt_speeds, nic_wide_outage
+    start(client, project="wide2")
+    choky = start(client, project="gepnic-choky")
+    with db.conn() as c:
+        c.execute("""UPDATE projects SET settings = '{"probe": "gepnic:a.gov.in", "threads": 6, "max_claimed": 20, "adaptive": {"max_windows": 30}}' WHERE name='wide2'""")
+        c.execute("""UPDATE projects SET settings = '{"probe": "gepnic:c.gov.in"}' WHERE name='gepnic-choky'""")
+        for i in range(20):
+            c.execute("INSERT INTO queue (project, key, partition_id, status, payload, claimed_at) VALUES ('wide2', %s, 0, 'claimed', '{}', now())", (f"w{i}",))
+        for t in ("gepnic:a.gov.in", "gepnic:b.gov.in"):                 # two portals down...
+            c.execute("INSERT INTO probes (target, ok, ms, at) VALUES (%s, true, 300, now() - interval '30 minutes')", (t,))
+            for _ in range(3):
+                c.execute("INSERT INTO probes (target, ok, ms) VALUES (%s, false, 20000)", (t,))
+        c.execute("INSERT INTO probes (target, ok, ms) VALUES ('gepnic:c.gov.in', true, 900)")   # ...and one whose front page loads
+        for name, v in (("n_http", 100), ("t_http_s", 1500), ("http_error", 12)):                # but whose requests take 15 s
+            c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s, 'gepnic-choky', %s, %s)", (choky, name, v))
+        assert nic_wide_outage(c) == 3
+    with db.conn() as c:
+        adapt_speeds(c, now=datetime.datetime(2026, 10, 21, 16, 40, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
+        st = c.execute("SELECT settings FROM projects WHERE name='wide2'").fetchone()["settings"]
+    assert st["max_claimed"] == 1 and st["adaptive"]["max_windows"] == 30 and "fell_at" not in st["adaptive"]   # held, nothing learned
+
+
 def test_a_slow_window_of_a_live_runner_stays_busy_and_is_not_stolen(client, clean):
     rid = start(client, project="slowwin")
     other = start(client, project="slowwin", job_index=1)

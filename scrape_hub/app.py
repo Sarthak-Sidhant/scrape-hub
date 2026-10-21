@@ -67,12 +67,22 @@ NIC_WIDE_PORTALS = 3      # this many other portals down at the same moment mean
 
 
 def nic_wide_outage(c):
-    """How many GePNIC portals the hub's checks find down right now (2 or more failed checks in the last 3 minutes), not counting
-    ones that have been down for over an hour (Andaman), so a long outage of one portal does not make every fall look NIC-wide."""
+    """How many GePNIC portals are in trouble right now: down by the hub's checks (2 or more failed in the last 3 minutes; not counting
+    ones down for over an hour, like Andaman, so one long outage does not make every fall look NIC-wide), or choking by what the runners
+    measured (over 6 s per request or more than 5% dropped in the last 3 minutes). Choking counts too: at 16:30-16:40 on 2026-10-21 West
+    Bengal and Haryana went down while UP and Maharashtra answered in 10-19 s at only 1-2 windows, and Haryana "learned" 22 -> 9."""
     return c.execute("""SELECT count(*) AS n FROM (
-                          SELECT target FROM probes WHERE target LIKE 'gepnic:%%' AND at > now() - interval '3 minutes'
-                          GROUP BY target HAVING count(*) FILTER (WHERE NOT ok) >= 2) d
-                        WHERE EXISTS (SELECT 1 FROM probes q WHERE q.target = d.target AND q.ok AND q.at > now() - interval '60 minutes')""").fetchone()["n"]
+                          SELECT d.target FROM (
+                            SELECT target FROM probes WHERE target LIKE 'gepnic:%%' AND at > now() - interval '3 minutes'
+                            GROUP BY target HAVING count(*) FILTER (WHERE NOT ok) >= 2) d
+                          WHERE EXISTS (SELECT 1 FROM probes q WHERE q.target = d.target AND q.ok AND q.at > now() - interval '60 minutes')
+                          UNION
+                          SELECT coalesce(p.settings->>'probe', p.name) FROM projects p CROSS JOIN LATERAL (
+                            SELECT sum(value) FILTER (WHERE name='n_http') AS n, sum(value) FILTER (WHERE name='t_http_s') AS t,
+                                   sum(value) FILTER (WHERE name='http_error') AS e
+                            FROM metrics WHERE project = p.name AND name IN ('n_http', 't_http_s', 'http_error')
+                              AND at > now() - interval '3 minutes') m
+                          WHERE p.name LIKE 'gepnic-%%' AND m.n >= 30 AND (m.t / m.n > 6 OR coalesce(m.e, 0) / m.n > 0.05)) x""").fetchone()["n"]
 
 
 def remember_fall(c, name, ad, windows):
