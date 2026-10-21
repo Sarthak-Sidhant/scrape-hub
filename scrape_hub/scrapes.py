@@ -87,6 +87,10 @@ def build(c):
         "SELECT project, sum(records) AS n FROM batches WHERE at > now() - interval '10 minutes' GROUP BY 1").fetchall()}
     rate60 = {r["project"]: float(r["n"]) / 60 for r in c.execute(
         "SELECT project, sum(records) AS n FROM batches WHERE at > now() - interval '60 minutes' GROUP BY 1").fetchall()}
+    # windows finished per minute over the last hour: a tail's retries re-list tenders already stored, so tenders per minute
+    # undercounts its progress; the queue draining does not (but it is noisy where windows are big and finish rarely)
+    drain = {r["project"]: float(r["n"]) / 60 for r in c.execute(
+        "SELECT project, count(*) AS n FROM queue WHERE status='done' AND done_at > now() - interval '60 minutes' GROUP BY 1").fetchall()}
     spark = {}
     for r in c.execute("""SELECT project, (floor(extract(epoch FROM at) / 600) * 600)::bigint AS t, sum(records)::bigint AS n
                           FROM batches WHERE at > now() - interval '6 hours' GROUP BY 1, 2""").fetchall():
@@ -139,6 +143,7 @@ def build(c):
             "windows": {k: v["n"] for k, v in q.items()}, "expected": {k: v["expected"] for k, v in q.items()},
             "records": records.get(p["name"], 0), "missing_docs": missing_docs.get(p["name"], 0) if fam in DOCS_SINCE and missing_docs is not None else None,
             "rate_10m": rate10.get(p["name"], 0.0), "rate_60m": rate60.get(p["name"], 0.0), "runners": runs.get(p["name"], {}),
+            "drain_per_min": drain.get(p["name"], 0.0),
             "load": load.get(p["name"]), "last_change": last_adj.get(p["name"]),
             "throttle": {"threads": st.get("threads"), "windows": st.get("max_claimed"), "cap": (st.get("adaptive") or {}).get("max_windows"),
                          "paused": bool(st.get("paused"))} if st.get("adaptive") or st.get("threads") else None,
@@ -186,7 +191,11 @@ def build(c):
             "expected": expected_total, "parked": parked, "target": target, "saved": saved, "records": main["records"], "left": left,
             "rate_10m": rate, "rate_60m": sum(st["rate_60m"] for st in s["stages"].values()),
             # over the last hour, so a portal that is down for a few minutes does not show a two-year ETA
-            "eta_s": eta(left, sum(st["rate_60m"] for st in s["stages"].values()) or rate) if status not in ("parked", "done") else None,
+            # the sooner of two clocks: tenders left over tenders per minute (too slow in a tail, whose retries re-list stored tenders)
+            # and windows left over windows finished per minute (noisy where windows are big); both over the last hour
+            "eta_s": min([x for x in (eta(left, sum(st["rate_60m"] for st in s["stages"].values()) or rate),
+                                      eta(open_w + w.get("failed", 0), main["drain_per_min"])) if x] or [None])
+                     if status not in ("parked", "done") else None,
             "windows": w, "throttle": main["throttle"], "load": main["load"], "last_change": main["last_change"],
             "runners": {k: v for st in s["stages"].values() for k, v in st["runners"].items()},
             "spark": [sum(x) for x in zip(*[st["spark"] for st in s["stages"].values()])],
