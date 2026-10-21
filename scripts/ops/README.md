@@ -23,6 +23,7 @@ sudo -u scrapehub bash -c 'set -a; . /etc/scrape-hub/env; set +a; cd /opt/scrape
 | `reseed_incomplete_sections.py` | Puts org-years that still have tenders without sections back to pending |
 | `reset_windows_with_stale_pages.py` | Puts windows holding "session expired" / "Stale Session" captures back to pending |
 | `tender_index.sql` | Rebuilds the lookup tables `eprocure.tender_index` (one row per tender), `eprocure.file_index` (one row per document file) and `eprocure.org_index` (which organisation id and code own which tenders, with the R2 path pattern). Run with `sudo -u postgres psql -d scrape_hub -f scripts/ops/tender_index.sql` (about 12 minutes, replaces both tables in one transaction) |
+| `bid_index.py init\|build\|refresh\|search <name>` | Who bid on which tender and who won, across every tender project: `eprocure.bid_index` (one row per bid, flags bid/winner/L1, awarded value), `eprocure.bidders` (one row per normalised name), `eprocure.bidder_stats`. Run as postgres from `/opt/scrape-hub`: `sudo -u postgres .venv/bin/python scripts/ops/bid_index.py search emudhra`. The full build reads all of `records` in gentle batches (about 7 h for 15.7M records, resumable with `build --resume`); `scrape-hub-bid-index.timer` refreshes nightly from the `records_scraped_at` index |
 | `set_threads.py <n>` | Sets the speed (threads per process) for `eprocure-tenders` (edit the name inside for another project) |
 
 Always read a script before running it: some of them change the queue or settings.

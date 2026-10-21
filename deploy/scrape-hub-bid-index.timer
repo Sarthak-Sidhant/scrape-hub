@@ -1,0 +1,10 @@
+[Unit]
+Description=Refresh the bid index nightly, after the database backup and before the quality numbers
+
+[Timer]
+OnCalendar=*-*-* 04:10:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

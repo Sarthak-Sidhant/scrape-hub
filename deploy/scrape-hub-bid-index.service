@@ -1,0 +1,15 @@
+[Unit]
+Description=Refresh the bid index (eprocure.bid_index, bidders, bidder_stats) for tenders scraped since the last run
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=postgres
+WorkingDirectory=/opt/scrape-hub
+ExecStartPre=/bin/sh -c 'while systemctl is-active --quiet scrape-hub-backup.service; do sleep 60; done'
+ExecStart=/opt/scrape-hub/.venv/bin/python -I scripts/ops/bid_index.py refresh
+TimeoutStartSec=4h
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=2G
+NoNewPrivileges=true
