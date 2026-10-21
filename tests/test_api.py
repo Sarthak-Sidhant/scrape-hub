@@ -1118,6 +1118,25 @@ def test_portals_choking_count_towards_a_nic_wide_problem(client, clean):
     assert st["max_claimed"] == 1 and st["adaptive"]["max_windows"] == 30 and "fell_at" not in st["adaptive"]   # held, nothing learned
 
 
+def test_record_counts_come_from_the_shared_table(client, clean):
+    from scrape_hub import scrapes
+    rid = start(client, project="cnt")
+    with db.conn() as c:
+        for i in range(3):
+            c.execute("INSERT INTO records (project, record_id, data) VALUES ('cnt', %s, '{}')", (f"r{i}",))
+        scrapes.refresh_counts(c)
+    with db.conn() as c:
+        assert c.execute("SELECT n FROM record_counts WHERE project='cnt'").fetchone()["n"] == 3
+        c.execute("INSERT INTO records (project, record_id, data) VALUES ('cnt', 'r9', '{}')")
+        scrapes.refresh_counts(c)                       # counted less than SLOW_COUNTS_S ago: not again
+        assert c.execute("SELECT n FROM record_counts WHERE project='cnt'").fetchone()["n"] == 3
+        scrapes._slow["at"] = 0
+        assert scrapes.slow_counts(c)[0]["cnt"] == 3    # requests read the table, they do not count
+        c.execute("UPDATE record_counts SET at = now() - interval '1 hour'")
+        scrapes.refresh_counts(c)
+        assert c.execute("SELECT n FROM record_counts WHERE project='cnt'").fetchone()["n"] == 4
+
+
 def test_a_slow_window_of_a_live_runner_stays_busy_and_is_not_stolen(client, clean):
     rid = start(client, project="slowwin")
     other = start(client, project="slowwin", job_index=1)

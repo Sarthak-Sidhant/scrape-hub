@@ -253,10 +253,23 @@ def janitor():
             print("janitor error:", e, flush=True)
 
 
+def counter():
+    """Keep record_counts fresh (the overview's per-project record counts; see scrapes.refresh_counts). Its own thread: a count takes
+    20 s or more and must not hold up the throttle in janitor()."""
+    while True:
+        time.sleep(30)
+        try:
+            with db.conn() as c:
+                scrapes.refresh_counts(c)
+        except Exception as e:
+            print("count error:", e, flush=True)
+
+
 @asynccontextmanager
 async def lifespan(app):
     db.init_schema()
     threading.Thread(target=janitor, daemon=True).start()
+    threading.Thread(target=counter, daemon=True).start()
     yield
     db.close()
 

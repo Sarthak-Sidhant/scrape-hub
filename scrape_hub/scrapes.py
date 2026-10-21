@@ -61,17 +61,43 @@ def host():
 MISSING_DOCS = """coalesce(data->'details'->'documents', '[]'::jsonb) @> '[{"status": "not_stored"}]'::jsonb"""
 
 
+def count_records(c):
+    """({project: records}, {project: records still waiting for their documents} or None). Slow: reads every record (20 s or more)."""
+    records = {r["project"]: r["n"] for r in c.execute("SELECT project, count(*)::bigint AS n FROM records GROUP BY 1").fetchall()}
+    # only through the partial index: without it this reads every record's JSON (gigabytes). Until it exists (it is built with
+    # CREATE INDEX CONCURRENTLY, which takes a while on a live table), progress counts every stored record.
+    ready = c.execute("""SELECT i.indisvalid AS ok FROM pg_index i JOIN pg_class x ON x.oid = i.indexrelid
+                         WHERE x.relname = 'records_missing_docs'""").fetchone()
+    missing = {r["project"]: r["n"] for r in c.execute(
+        f"SELECT project, count(*)::bigint AS n FROM records WHERE {MISSING_DOCS} GROUP BY 1").fetchall()} if ready and ready["ok"] else None
+    return records, missing
+
+
+def refresh_counts(c):
+    """Recount into record_counts, from one worker at a time and at most every SLOW_COUNTS_S (run from a background thread)."""
+    if not c.execute("SELECT pg_try_advisory_xact_lock(748214) AS ok").fetchone()["ok"]:
+        return
+    if c.execute("SELECT 1 FROM record_counts WHERE at > now() - make_interval(secs => %s) LIMIT 1", (SLOW_COUNTS_S,)).fetchone():
+        return
+    c.execute("SET LOCAL statement_timeout = '10min'")
+    records, missing = count_records(c)
+    c.execute("DELETE FROM record_counts")
+    for project, n in records.items():
+        c.execute("INSERT INTO record_counts (project, n, missing_docs) VALUES (%s, %s, %s)",
+                  (project, n, (missing or {}).get(project, 0) if missing is not None else None))
+
+
 def slow_counts(c):
     """Records per project, and per project the records still waiting for their documents (saved by a run that did not fetch them;
-    partial index records_missing_docs). Refreshed every two minutes."""
-    if time.time() - _slow["at"] > SLOW_COUNTS_S:
-        _slow["records"] = {r["project"]: r["n"] for r in c.execute("SELECT project, count(*)::bigint AS n FROM records GROUP BY 1").fetchall()}
-        # only through the partial index: without it this reads every record's JSON (gigabytes). Until it exists (it is built with
-        # CREATE INDEX CONCURRENTLY, which takes a while on a live table), progress counts every stored record.
-        ready = c.execute("""SELECT i.indisvalid AS ok FROM pg_index i JOIN pg_class x ON x.oid = i.indexrelid
-                             WHERE x.relname = 'records_missing_docs'""").fetchone()
-        _slow["missing_docs"] = {r["project"]: r["n"] for r in c.execute(
-            f"SELECT project, count(*)::bigint AS n FROM records WHERE {MISSING_DOCS} GROUP BY 1").fetchall()} if ready and ready["ok"] else None
+    partial index records_missing_docs). Read from record_counts, which a background thread keeps fresh (every SLOW_COUNTS_S), so no
+    request waits for the count; counted here only before that table has ever been filled."""
+    if time.time() - _slow["at"] > 20:
+        rows = c.execute("SELECT project, n, missing_docs FROM record_counts").fetchall()
+        if rows:
+            _slow["records"] = {r["project"]: r["n"] for r in rows}
+            _slow["missing_docs"] = None if any(r["missing_docs"] is None for r in rows) else {r["project"]: r["missing_docs"] for r in rows}
+        else:
+            _slow["records"], _slow["missing_docs"] = count_records(c)
         _slow["at"] = time.time()
     return _slow["records"], _slow["missing_docs"]
 

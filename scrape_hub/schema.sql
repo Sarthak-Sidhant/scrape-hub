@@ -234,3 +234,12 @@ CREATE TABLE IF NOT EXISTS bundle_attempts (    -- password tries on the public 
     at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS bundle_attempts_slug_at ON bundle_attempts (slug, at);
+
+-- Records per project (and per project those still waiting for documents), refreshed by one hub worker in the background
+-- (scrapes.refresh_counts). Counting 16M+ records takes 20 s or more, so requests read this table instead of counting.
+CREATE TABLE IF NOT EXISTS record_counts (
+    project text PRIMARY KEY,
+    n bigint NOT NULL,
+    missing_docs bigint,
+    at timestamptz NOT NULL DEFAULT now()
+);
