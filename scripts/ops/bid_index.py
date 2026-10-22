@@ -126,7 +126,10 @@ READ = """SELECT record_id, d->'bids', d->'fields'->'winners', d->'fields'->>'wi
 
 
 def rows_for(w, ids, pid, rid, bids, winners, winner, l1, awarded):
-    wins = {key_of(n): None for n in (winners or []) + [winner] if n}
+    # winner_bidder_name is the parser's "; "-joined copy of winners (22 KB on a 1,268-winner rate contract): use it only without a list
+    winners = [n for n in winners or [] if n] or [n.strip() for n in (winner or "").split("; ") if n.strip()]
+    winner = None
+    wins = {key_of(n): None for n in winners}
     for a in awarded or []:
         if a.get("bidder"):
             wins[key_of(a["bidder"])] = num(a.get("value"))
