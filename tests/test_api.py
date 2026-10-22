@@ -962,6 +962,22 @@ def test_a_choke_teaches_a_lower_cap_once_not_every_minute(client, clean):
     assert st["adaptive"]["max_windows"] == 25 and st["max_claimed"] == 12         # chokes again near the cap a minute later: halve, learn nothing
 
 
+def test_a_quiet_portal_at_one_window_with_work_waiting_gets_another(client, clean):
+    start(client, project="quiet")
+    with db.conn() as c:
+        c.execute("INSERT INTO queue (project, key, partition_id, status, payload) VALUES ('quiet', 'w1', 0, 'pending', '{}')")
+    st = _adapt_once("quiet", {"threads": 1, "max_claimed": 1, "adaptive": {"max_windows": 8}}, 3, 30, 0)     # 3 requests: too few to judge
+    assert st["max_claimed"] == 2
+    st = _adapt_once("quiet", None, 3, 30, 1)
+    assert st["max_claimed"] == 3
+    st = _adapt_once("quiet", None, 3, 30, 2)
+    assert st["max_claimed"] == 3                                    # from 3 windows on, it waits for real numbers again
+    with db.conn() as c:
+        c.execute("DELETE FROM queue WHERE project='quiet'")
+    st = _adapt_once("quiet", {"threads": 1, "max_claimed": 1, "adaptive": {"max_windows": 8}}, 3, 30, 3)
+    assert st["max_claimed"] == 1                                    # nothing to do: leave it
+
+
 def test_a_slow_minute_far_below_the_ceiling_does_not_lower_it(client, clean):
     start(client, project="blip")
     st = _adapt_once("blip", {"threads": 16, "max_claimed": 12, "adaptive": {"max_windows": 32}}, 200, 1400, 0)

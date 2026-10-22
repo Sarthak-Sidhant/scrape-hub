@@ -170,6 +170,13 @@ def adapt_speeds(c, now=None):
         fail_frac = f / (f + d) if f + d >= 10 and f >= 3 else 0.0
         threads, windows = int(st.get("threads", 4)), int(st.get("max_claimed") or max(1, int(ad.get("max_windows", 24)) // 2))
         nt, nw, why = adapt_step(phase, ad, threads, windows, sec, e / n if n else 0.0, fail_frac)
+        if sec is None and windows < 3 and windows < int(ad.get("max_windows", 24)) and c.execute(
+                """SELECT 1 FROM queue WHERE project=%s AND (status='pending' OR (status='failed' AND attempts < %s)) LIMIT 1""",
+                (p["name"], RETRY_MAX_ATTEMPTS)).fetchone():
+            # held at 1-2 windows with too little traffic to judge, while the probe says the portal is up and work is waiting: one more
+            # window to find out. Otherwise a single slow window keeps it at 1 for as long as that window takes (2026-10-22 20:40-21:00 UP:
+            # one window grinding through 25 s answers, no other traffic, the throttle holding at 1 for 20 minutes)
+            nt, nw, why = max(threads, 2), windows + 1, f"{phase}: too little traffic to judge at {windows} window(s), portal up, work waiting: one more"
         if ad.get("resume_to"):
             ph = {**PHASES[phase], **(ad.get(phase) or {})}
             # judge the comeback on the last 90 s only: requests that hung through the outage finish when it ends and report 20-70 s,
