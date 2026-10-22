@@ -802,11 +802,10 @@ def test_throttle_step_moves_threads_and_windows_within_the_phase():
     assert adapt_step("peak", ad, 4, 24, 0.8, 0, 0)[:2] == (6, 28)         # at 60% of the cap: +4
     assert adapt_step("day", ad, 4, 6, 0.8, 0, 0)[:2] == (6, 10)           # the day runs flat out too
     assert adapt_step("peak", ad, 15, 39, 0.8, 0, 0)[:2] == (16, 40)       # up to the ceilings
-    assert adapt_step("peak", ad, 8, 12, 5.0, 0, 0)[:2] == (7, 10)         # above the 4 s target: ease off
-    assert adapt_step("peak", ad, 8, 12, 4.0, 0, 0)[:2] == (8, 12)         # at the target: hold
-    assert adapt_step("peak", ad, 8, 12, 11.0, 0, 0)[:2] == (6, 8)         # over 2.5x the target: cut both by a third
-    assert adapt_step("peak", ad, 8, 12, 0.8, 0, 0.25)[:2] == (6, 8)       # searches failing: cut even if answers look quick
-    assert adapt_step("peak", ad, 8, 12, 0.8, 0.06, 0)[:2] == (10, 16)     # 6% dropped is tolerated now (the line is 8%)
+    assert adapt_step("peak", ad, 8, 12, 4.0, 0, 0)[:2] == (7, 10)         # above the 3 s target: ease off
+    assert adapt_step("peak", ad, 8, 12, 7.0, 0, 0)[:2] == (4, 6)          # over twice the target: halve both
+    assert adapt_step("peak", ad, 8, 12, 0.8, 0, 0.25)[:2] == (4, 6)       # searches failing: halve even if answers look quick
+    assert adapt_step("peak", ad, 8, 12, 0.8, 0.06, 0)[:2] == (4, 6)       # 6% dropped: halve
     assert adapt_step("peak", ad, 1, 1, 9.0, 0, 0)[:2] == (1, 1)           # never below one thread and one window
     assert adapt_step("peak", ad, 8, 12, None, 0, 0)[:2] == (8, 12)        # too little traffic: leave it
     assert adapt_step("day", {"max_windows": 20, "day": {"target_s": 1.0}}, 8, 12, 1.5, 0, 0)[:2] == (7, 10)   # per-project override
@@ -914,12 +913,12 @@ def test_a_portal_that_chokes_without_going_down_gets_a_softer_learned_cap(clien
     rid = start(client, project="choke")
     with db.conn() as c:
         c.execute("""UPDATE projects SET settings = '{"threads": 16, "max_claimed": 32, "adaptive": {"max_windows": 32}}' WHERE name='choke'""")
-        c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,'choke','n_http',200), (%s,'choke','t_http_s',2200)", (rid, rid))
+        c.execute("INSERT INTO metrics (run_id, project, name, value) VALUES (%s,'choke','n_http',200), (%s,'choke','t_http_s',1400)", (rid, rid))
     with db.conn() as c:
         adapt_speeds(c, now=datetime.datetime(2026, 10, 20, 2, 0, tzinfo=datetime.timezone(datetime.timedelta(hours=5, minutes=30))))
         st = c.execute("SELECT settings FROM projects WHERE name='choke'").fetchone()["settings"]
         reasons = [r["reason"] for r in c.execute("SELECT reason FROM adjustments ORDER BY at").fetchall()]
-    assert (st["threads"], st["max_claimed"], st["adaptive"]["max_windows"]) == (11, 22, 28)    # cut by a third, and the cap is 90% of 32
+    assert (st["threads"], st["max_claimed"], st["adaptive"]["max_windows"]) == (8, 16, 28)     # halved, and the cap is 90% of 32
     assert any("choked at 32 windows" in r for r in reasons)
 
 
@@ -957,16 +956,16 @@ def _adapt_once(project, settings, n_http, t_http_s, minute):
 
 def test_a_choke_teaches_a_lower_cap_once_not_every_minute(client, clean):
     start(client, project="ratchet")
-    st = _adapt_once("ratchet", {"threads": 6, "max_claimed": 28, "adaptive": {"max_windows": 28}}, 200, 2200, 0)
-    assert st["adaptive"]["max_windows"] == 25 and st["max_claimed"] == 19         # choked at 28: cap 90%, cut by a third
-    st = _adapt_once("ratchet", None, 200, 2200, 1)
-    assert st["adaptive"]["max_windows"] == 25 and st["max_claimed"] == 13         # still struggling a minute later: cut, but learn nothing
+    st = _adapt_once("ratchet", {"threads": 6, "max_claimed": 28, "adaptive": {"max_windows": 28}}, 200, 1400, 0)
+    assert st["adaptive"]["max_windows"] == 25 and st["max_claimed"] == 14         # choked at 28: cap 90%, halved
+    st = _adapt_once("ratchet", {**st, "max_claimed": 24}, 200, 1400, 1)
+    assert st["adaptive"]["max_windows"] == 25 and st["max_claimed"] == 12         # chokes again near the cap a minute later: halve, learn nothing
 
 
 def test_a_slow_minute_far_below_the_ceiling_does_not_lower_it(client, clean):
     start(client, project="blip")
-    st = _adapt_once("blip", {"threads": 16, "max_claimed": 12, "adaptive": {"max_windows": 32}}, 200, 2200, 0)
-    assert (st["max_claimed"], st["adaptive"]["max_windows"]) == (8, 32)        # cut by a third, ceiling untouched
+    st = _adapt_once("blip", {"threads": 16, "max_claimed": 12, "adaptive": {"max_windows": 32}}, 200, 1400, 0)
+    assert (st["max_claimed"], st["adaptive"]["max_windows"]) == (6, 32)        # halved, ceiling untouched
 
 
 def test_a_fast_portal_at_its_ceiling_earns_a_higher_one(client, clean):

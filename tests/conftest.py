@@ -15,6 +15,7 @@ import pgserver  # noqa: E402
 _tmp = tempfile.mkdtemp()
 _pg = pgserver.get_server(os.path.join(_tmp, "pg"))
 os.environ["DATABASE_URL"] = _pg.get_uri()
+os.environ["SCRAPE_HUB_NO_COUNTER"] = "1"   # the background recount would race the per-test TRUNCATE (deadlock); tests call refresh_counts directly
 os.environ["OIDC_AUDIENCE"] = "https://scrape.test"
 os.environ["SCRAPE_LEGACY_TOKEN"] = "legacy-secret"
 os.environ["STATUS_PASSWORD_FILE"] = os.path.join(_tmp, "password")

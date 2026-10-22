@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import threading
 import time
@@ -27,10 +28,11 @@ WEB = Path(__file__).resolve().parent.parent / "web"
 # threads/windows: ceilings, windows as a share of the project's night window cap.
 # Since 20 Oct 2026 every band runs flat out ("max scraping whenever capacity is there"): the throttle's own reactions to slow answers,
 # failing searches and outages are what hold a portal back, not the clock. Per-project overrides (settings.adaptive.<band>) still work.
-# 22 Oct 2026, loosened at Sarthak's ask ("raise windows, make the throttle a bit loose"): aim for 4 s (was 3), cut a third (was half) only
-# past 2.5x that or 8% dropped (was 2x / 5%), climb +4 near the ceiling (was +2), raise ceilings after 5 healthy minutes (was 10), learn 90% /
-# 80% of a choke / outage level (was 80 / 70) and forget it after 1 hour (was 3).
-_HAMMER = {"target_s": 4.0, "up": (2, 4), "down": (1, 2), "threads": 16, "windows": 1.0}
+# 22 Oct 2026, loosened at Sarthak's ask ("raise windows, make the throttle a bit loose"): climb +4 near the ceiling (was +2), raise ceilings
+# after 5 healthy minutes (was 10), learn 90% / 80% of a choke / outage level (was 80 / 70) and forget it after 1 hour (was 3). Reacting later
+# too (4 s target, cut a third only past 10 s or 8% dropped) was tried 04:52-05:35 and lost: 874 tenders/min against 1,289 the hour before,
+# 10 chokes and outages against 3 (portals slid for minutes, then collapsed). So the early reaction is back: aim for 3 s, halve past 2x or 5%.
+_HAMMER = {"target_s": 3.0, "up": (2, 4), "down": (1, 2), "threads": 16, "windows": 1.0}
 PHASES = {"peak": dict(_HAMMER), "shoulder": dict(_HAMMER), "day": dict(_HAMMER)}
 FELL_MEMORY_S = 3600       # how long a portal's fall level keeps raises below it
 CAP_CEILING = 40      # the highest window cap the throttle raises a healthy portal to (big state portals fell over at 44-48, 2026-10-19)
@@ -54,9 +56,9 @@ def adapt_step(phase, ad, threads, windows, sec, err_frac, fail_frac):
         return min(threads, t_hi), min(windows, w_hi), f"{phase}: ceilings are {t_hi} threads, {w_hi} windows"
     if sec is None:
         return threads, windows, "too little traffic to judge"
-    if sec > 2.5 * target or err_frac > 0.08 or fail_frac > 0.15:
-        bits = [f"{sec:.1f} s per request"] + ([f"{err_frac:.0%} dropped"] if err_frac > 0.08 else []) + ([f"{fail_frac:.0%} of searches/windows failing"] if fail_frac > 0.15 else [])
-        return max(t_lo, threads - max(1, threads // 3)), max(w_lo, windows - max(1, windows // 3)), f"{phase}: {', '.join(bits)}: halve"
+    if sec > 2 * target or err_frac > 0.05 or fail_frac > 0.10:
+        bits = [f"{sec:.1f} s per request"] + ([f"{err_frac:.0%} dropped"] if err_frac > 0.05 else []) + ([f"{fail_frac:.0%} of searches/windows failing"] if fail_frac > 0.10 else [])
+        return max(t_lo, threads // 2), max(w_lo, windows // 2), f"{phase}: {', '.join(bits)}: halve"
     if sec > target:
         return max(t_lo, threads - dn_t), max(w_lo, windows - dn_w), f"{phase}: {sec:.1f} s per request, above {target} s: ease off"
     if sec < 0.7 * target:
@@ -188,7 +190,7 @@ def adapt_speeds(c, now=None):
             elif now.timestamp() - float(ad.get("resume_t") or 0) > 1800:
                 c.execute("UPDATE projects SET settings = settings #- '{adaptive,resume_to}' #- '{adaptive,resume_t}' WHERE name=%s", (p["name"],))
         cap = int(ad.get("max_windows", 24))
-        overloaded = sec is not None and (sec > 2.5 * float({**PHASES[phase], **(ad.get(phase) or {})}["target_s"]) or (e / n if n else 0.0) > 0.08)
+        overloaded = sec is not None and (sec > 2 * float({**PHASES[phase], **(ad.get(phase) or {})}["target_s"]) or (e / n if n else 0.0) > 0.05)
         # only real overload (slow answers or dropped connections) teaches a lower limit; failing windows alone just halve for now
         # once per incident: cuts are a third now, so a portal still struggling a minute later is still near its (already lowered) cap;
         # learning again each minute ratcheted West Bengal 28 -> 25 -> 17 -> 11 -> 8 in four minutes (2026-10-22 05:05-05:09)
@@ -275,7 +277,8 @@ def counter():
 async def lifespan(app):
     db.init_schema()
     threading.Thread(target=janitor, daemon=True).start()
-    threading.Thread(target=counter, daemon=True).start()
+    if not os.environ.get("SCRAPE_HUB_NO_COUNTER"):
+        threading.Thread(target=counter, daemon=True).start()
     yield
     db.close()
 
