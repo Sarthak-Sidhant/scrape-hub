@@ -153,3 +153,17 @@ def test_overview_sums_the_many_portal_scrape_into_one_card(client, clean, login
     assert ov["totals"]["running"] == 2
     wb = login.get("/api/fleet").json()["servers"][0]["portals"][0]
     assert wb["load"] == {"req_per_min": 20.0, "s_per_req": 1.5}
+
+
+def test_gepnic_journal_needs_login_and_the_file(client, clean, monkeypatch, tmp_path):
+    from scrape_hub import app as hub
+    client.cookies.clear()                                               # the test client is shared: start signed out
+    r = client.get("/gepnic", follow_redirects=False)
+    assert r.status_code == 303 and r.headers["location"] == "/login"   # not signed in
+    login = client
+    login.post("/login", content="password=hunter2hunter2", headers={"content-type": "application/x-www-form-urlencoded"}, follow_redirects=False)
+    monkeypatch.setattr(hub, "REPORTS", tmp_path)
+    assert login.get("/gepnic").status_code == 404                     # no journal on this server
+    (tmp_path / "gepnic.html").write_text("<html><body><!--NAV--><p>the story</p></body></html>")
+    r = login.get("/gepnic")
+    assert r.status_code == 200 and "the story" in r.text and 'href="/gepnic" aria-current="page"' in r.text

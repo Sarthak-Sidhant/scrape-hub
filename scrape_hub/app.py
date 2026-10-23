@@ -957,13 +957,18 @@ def need_login(request: Request):
         raise HTTPException(401, "login required")
 
 
-NAV = [("/", "Overview"), ("/portals", "Portals"), ("/throttle", "Throttle"), ("/data", "Data"), ("/runs", "Runs"), ("/explore", "Rate explorer"), ("/tender", "Tender lookup"), ("/bundle", "Bundles")]
+NAV = [("/", "Overview"), ("/portals", "Portals"), ("/throttle", "Throttle"), ("/data", "Data"), ("/runs", "Runs"), ("/explore", "Rate explorer"), ("/tender", "Tender lookup"), ("/bundle", "Bundles"), ("/gepnic", "Journal")]
+
+
+def with_nav(html: str, current: str = "") -> str:
+    """The shared navigation put in place of a page's <!--NAV--> marker."""
+    nav = "".join(f'<a href="{href}"{' aria-current="page"' if href == current else ''}>{label}</a>' for href, label in NAV)
+    return html.replace("<!--NAV-->", f'<nav class="nav">{nav}<a href="/logout" class="out">Sign out</a></nav>')
 
 
 def page(name: str, current: str = "") -> str:
     """A dashboard page with the shared navigation put in place of its <!--NAV--> marker."""
-    nav = "".join(f'<a href="{href}"{' aria-current="page"' if href == current else ''}>{label}</a>' for href, label in NAV)
-    return (WEB / name).read_text().replace("<!--NAV-->", f'<nav class="nav">{nav}<a href="/logout" class="out">Sign out</a></nav>')
+    return with_nav((WEB / name).read_text(), current)
 
 
 @app.get("/healthz")
@@ -1245,6 +1250,17 @@ def find_outages(rows, gap_s=360, min_fails=3):
 
 
 REPORTS = WEB / "reports"
+
+
+@app.get("/gepnic", response_class=HTMLResponse)
+def gepnic_journal(request: Request):
+    """The journal of the GePNIC crawl (Oct 2026): a hand-written page kept on the server only (web/reports/gepnic.html, not in git, because it
+    quotes the operator's prompts), served behind the dashboard login with the shared navigation."""
+    if not logged_in(request):
+        return RedirectResponse("/login", 303)
+    if not (REPORTS / "gepnic.html").is_file():
+        raise HTTPException(404, "no journal on this server")
+    return with_nav((REPORTS / "gepnic.html").read_text(), "/gepnic")
 
 
 @app.get("/reports/{name}", dependencies=[Depends(need_login)])
